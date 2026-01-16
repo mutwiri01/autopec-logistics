@@ -6,19 +6,16 @@ require("dotenv").config();
 
 const app = express();
 
-// Middleware - Updated CORS to allow all origins in production
+// Middleware - Updated CORS to allow all origins
 const allowedOrigins = [
   "http://localhost:5173",
   "https://autopec-logistics.vercel.app",
-  // Add your other domains here
 ];
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps or curl requests)
       if (!origin) return callback(null, true);
-
       if (allowedOrigins.indexOf(origin) === -1) {
         const msg =
           "The CORS policy for this site does not allow access from the specified Origin.";
@@ -32,11 +29,15 @@ app.use(
   })
 );
 
-// Handle preflight requests
-app.options("{*path}", cors());
+// REMOVED: app.options("{*path}", cors());
+// The app.use(cors(...)) above already handles preflight OPTIONS requests automatically.
 
-// Parse JSON bodies
 app.use(express.json());
+
+// --- ADDED: Root Route ---
+app.get("/", (req, res) => {
+  res.send("Autopec Backend API is running. Use /api/repairs for data.");
+});
 
 // Routes
 app.use("/api/repairs", repairRoutes);
