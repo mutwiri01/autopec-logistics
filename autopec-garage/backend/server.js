@@ -36,7 +36,7 @@ app.use(express.json());
 
 // --- ADDED: Root Route ---
 app.get("/", (req, res) => {
-  res.send("Autopec Backend API is running. Use /api/repairs for data.");
+  res.send("Autopec is running.");
 });
 
 // Routes
