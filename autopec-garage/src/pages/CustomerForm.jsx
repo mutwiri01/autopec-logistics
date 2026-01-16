@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { FaCar, FaUser, FaPhone, FaPaperPlane } from "react-icons/fa";
 import { submitRepairRequest } from "../services/api";
 import Header from "../components/Header";
-import Footer from "../components/Footer";
 
 const CustomerForm = () => {
   const [formData, setFormData] = useState({
@@ -105,7 +104,6 @@ const CustomerForm = () => {
             Submit Another Request
           </button>
         </div>
-        <Footer />
       </div>
     );
   }
