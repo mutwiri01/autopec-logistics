@@ -33,11 +33,11 @@ const CustomerForm = () => {
   const [captureType, setCaptureType] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [error, setError] = useState(null);
 
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
   const mediaRecorderRef = useRef(null);
-  const audioContextRef = useRef(null);
   const streamRef = useRef(null);
   const recordingIntervalRef = useRef(null);
 
@@ -50,6 +50,7 @@ const CustomerForm = () => {
 
   // Open camera for photo/video capture
   const startCapture = async (type) => {
+    setError(null);
     setCaptureType(type);
     setShowCaptureModal(true);
 
@@ -68,17 +69,7 @@ const CustomerForm = () => {
       }
 
       if (type === "audio") {
-        // Set up audio recording
-        audioContextRef.current = new (
-          window.AudioContext || window.webkitAudioContext
-        )();
-        const mediaStream =
-          audioContextRef.current.createMediaStreamSource(stream);
-        const destination =
-          audioContextRef.current.createMediaStreamDestination();
-        mediaStream.connect(destination);
-
-        mediaRecorderRef.current = new MediaRecorder(destination.stream);
+        mediaRecorderRef.current = new MediaRecorder(stream);
         setupMediaRecorder();
       } else if (type === "video") {
         mediaRecorderRef.current = new MediaRecorder(stream);
@@ -86,7 +77,7 @@ const CustomerForm = () => {
       }
     } catch (error) {
       console.error("Error accessing media devices:", error);
-      alert("Unable to access camera/microphone. Please check permissions.");
+      setError("Unable to access camera/microphone. Please check permissions.");
       setShowCaptureModal(false);
     }
   };
@@ -261,8 +252,20 @@ const CustomerForm = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
+
     try {
+      // Validate required fields
+      if (!formData.registrationNumber || !formData.problemDescription) {
+        throw new Error(
+          "Registration number and problem description are required",
+        );
+      }
+
+      console.log("Submitting form data:", formData);
       await submitRepairRequest(formData);
+      console.log("Submission successful");
+
       setSubmitted(true);
       setFormData({
         registrationNumber: "",
@@ -274,7 +277,11 @@ const CustomerForm = () => {
       });
     } catch (error) {
       console.error("Error submitting request:", error);
-      alert("Error submitting request. Please try again.");
+      setError(
+        error.response?.data?.error ||
+          error.message ||
+          "Error submitting request. Please try again.",
+      );
     } finally {
       setLoading(false);
     }
@@ -388,6 +395,21 @@ const CustomerForm = () => {
             Fill in the details below and our team will assist you promptly
           </p>
         </div>
+
+        {error && (
+          <div
+            style={{
+              backgroundColor: "#ffebee",
+              color: "#d32f2f",
+              padding: "12px",
+              borderRadius: "8px",
+              marginBottom: "20px",
+              border: "1px solid #ffcdd2",
+            }}
+          >
+            {error}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit}>
           <div

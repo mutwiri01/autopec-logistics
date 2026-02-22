@@ -9,13 +9,17 @@ const app = express();
 // Middleware - Updated CORS to allow all origins
 const allowedOrigins = [
   "http://localhost:5173",
+  "http://localhost:3000",
   "https://autopec-logistics.vercel.app",
+  "https://autopec-logistics-btwc.vercel.app",
 ];
 
 app.use(
   cors({
     origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps, curl, etc)
       if (!origin) return callback(null, true);
+
       if (allowedOrigins.indexOf(origin) === -1) {
         const msg =
           "The CORS policy for this site does not allow access from the specified Origin.";
@@ -45,7 +49,16 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "OK", message: "Server is running" });
 });
 
-// MongoDB Connection
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error("Server error:", err);
+  res.status(500).json({
+    error: err.message || "Internal server error",
+    stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
+  });
+});
+
+// MongoDB Connection - Fixed: Removed deprecated options
 mongoose
   .connect(process.env.MONGODB_URI)
   .then(() => console.log("Connected to MongoDB"))
