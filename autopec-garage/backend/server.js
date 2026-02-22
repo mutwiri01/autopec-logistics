@@ -26,15 +26,13 @@ app.use(
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  })
+  }),
 );
 
-// REMOVED: app.options("{*path}", cors());
-// The app.use(cors(...)) above already handles preflight OPTIONS requests automatically.
-
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// --- ADDED: Root Route ---
+// Root Route
 app.get("/", (req, res) => {
   res.send("Autopec is running.");
 });

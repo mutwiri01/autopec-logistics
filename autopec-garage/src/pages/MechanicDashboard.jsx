@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 import React, { useState, useEffect, useMemo } from "react";
 import {
   FaTools,
@@ -15,6 +16,13 @@ import {
   FaFilter,
   FaBars,
   FaTimes as FaTimesIcon,
+  FaImage,
+  FaVideo,
+  FaMicrophone,
+  FaDownload,
+  FaPlay,
+  FaPause,
+  FaExpand,
 } from "react-icons/fa";
 import {
   getAllRepairs,
@@ -33,10 +41,12 @@ const MechanicDashboard = () => {
   const [statusFilter, setStatusFilter] = useState("all");
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [ setRefreshCount] = useState(0);
+  const [refreshCount, setRefreshCount] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
+  const [selectedMedia, setSelectedMedia] = useState(null);
+  const [playingAudio, setPlayingAudio] = useState(null);
+  const [fullscreenMedia, setFullscreenMedia] = useState(null);
 
-  // Combined effect for initial load and auto-refresh
   useEffect(() => {
     let isMounted = true;
     let intervalId;
@@ -59,29 +69,24 @@ const MechanicDashboard = () => {
       }
     };
 
-    // Initial load
     loadAndRefreshRepairs();
 
-    // Set up auto-refresh if enabled
     if (autoRefresh) {
       intervalId = setInterval(() => {
         loadAndRefreshRepairs();
         setRefreshCount((prev) => prev + 1);
-      }, 10000); // Refresh every 10 seconds
+      }, 10000);
     }
 
-    // Cleanup function
     return () => {
       isMounted = false;
       if (intervalId) clearInterval(intervalId);
     };
   }, [autoRefresh]);
 
-  // Filter repairs using useMemo instead of useEffect with setState
   const filteredRepairs = useMemo(() => {
     let results = repairs;
 
-    // Apply search filter
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       results = results.filter(
@@ -94,11 +99,10 @@ const MechanicDashboard = () => {
           (repair.problemDescription &&
             repair.problemDescription.toLowerCase().includes(term)) ||
           (repair.mechanicNotes &&
-            repair.mechanicNotes.toLowerCase().includes(term))
+            repair.mechanicNotes.toLowerCase().includes(term)),
       );
     }
 
-    // Apply status filter
     if (statusFilter !== "all") {
       results = results.filter((repair) => repair.status === statusFilter);
     }
@@ -109,10 +113,11 @@ const MechanicDashboard = () => {
   const toggleExpand = (repairId) => {
     if (expandedRepairId === repairId) {
       setExpandedRepairId(null);
+      setSelectedMedia(null);
+      setPlayingAudio(null);
     } else {
       setExpandedRepairId(repairId);
     }
-    // Cancel any active editing when expanding/collapsing
     setEditingRepairId(null);
     setMechanicNotes("");
   };
@@ -120,7 +125,6 @@ const MechanicDashboard = () => {
   const startEditNotes = (repair) => {
     setEditingRepairId(repair._id);
     setMechanicNotes(repair.mechanicNotes || "");
-    // Ensure the repair is expanded when editing
     if (expandedRepairId !== repair._id) {
       setExpandedRepairId(repair._id);
     }
@@ -139,17 +143,15 @@ const MechanicDashboard = () => {
         mechanicNotes: mechanicNotes.trim(),
       });
 
-      // Update local state
       const updatedRepairs = repairs.map((repair) =>
         repair._id === repairId
           ? { ...repair, mechanicNotes: mechanicNotes.trim() }
-          : repair
+          : repair,
       );
 
       setRepairs(updatedRepairs);
       setEditingRepairId(null);
       setMechanicNotes("");
-      alert("Notes saved successfully.");
     } catch (error) {
       console.error("Error saving notes:", error);
       alert("Error saving notes. Please try again.");
@@ -166,13 +168,11 @@ const MechanicDashboard = () => {
         mechanicNotes: notesToSave,
       });
 
-      // Update local state
       const updatedRepairs = repairs.map((repair) =>
-        repair._id === repairId ? { ...repair, status: newStatus } : repair
+        repair._id === repairId ? { ...repair, status: newStatus } : repair,
       );
 
       setRepairs(updatedRepairs);
-      alert(`Status updated to ${newStatus.replace("_", " ")}`);
     } catch (error) {
       console.error("Error updating repair status:", error);
       alert("Error updating status. Please try again.");
@@ -188,12 +188,10 @@ const MechanicDashboard = () => {
 
     try {
       await deleteRepair(repairId);
-      // Remove the deleted repair from state
       const updatedRepairs = repairs.filter(
-        (repair) => repair._id !== repairId
+        (repair) => repair._id !== repairId,
       );
       setRepairs(updatedRepairs);
-      alert("Repair request deleted successfully.");
     } catch (error) {
       console.error("Error deleting repair:", error);
       alert("Error deleting repair request. Please try again.");
@@ -247,6 +245,31 @@ const MechanicDashboard = () => {
       default:
         return "#666";
     }
+  };
+
+  const getMediaIcon = (type) => {
+    switch (type) {
+      case "image":
+        return <FaImage />;
+      case "video":
+        return <FaVideo />;
+      case "audio":
+        return <FaMicrophone />;
+      default:
+        return <FaDownload />;
+    }
+  };
+
+  const handlePlayAudio = (url) => {
+    if (playingAudio === url) {
+      setPlayingAudio(null);
+    } else {
+      setPlayingAudio(url);
+    }
+  };
+
+  const openFullscreen = (media) => {
+    setFullscreenMedia(media);
   };
 
   const statusOptions = [
@@ -614,7 +637,7 @@ const MechanicDashboard = () => {
                 animation: "fadeIn 0.5s ease",
               }}
             >
-              {/* Repair Header - Always visible */}
+              {/* Repair Header */}
               <div
                 style={{
                   display: "flex",
@@ -674,6 +697,11 @@ const MechanicDashboard = () => {
                   </div>
                   <div style={{ color: "#666", fontSize: "0.8rem" }}>
                     {new Date(repair.createdAt).toLocaleDateString()}
+                    {repair.multimedia && repair.multimedia.length > 0 && (
+                      <span style={{ marginLeft: "10px", color: "#009688" }}>
+                        📎 {repair.multimedia.length} attachment(s)
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -692,7 +720,7 @@ const MechanicDashboard = () => {
                 </div>
               </div>
 
-              {/* Expanded Content - Only visible when expanded */}
+              {/* Expanded Content */}
               {expandedRepairId === repair._id && (
                 <div
                   style={{
@@ -783,7 +811,7 @@ const MechanicDashboard = () => {
                       >
                         <strong>Last Updated:</strong>{" "}
                         {new Date(
-                          repair.updatedAt || repair.createdAt
+                          repair.updatedAt || repair.createdAt,
                         ).toLocaleString()}
                       </p>
                     </div>
@@ -814,6 +842,187 @@ const MechanicDashboard = () => {
                       {repair.problemDescription}
                     </div>
                   </div>
+
+                  {/* Multimedia Section */}
+                  {repair.multimedia && repair.multimedia.length > 0 && (
+                    <div style={{ marginBottom: "15px" }}>
+                      <strong
+                        style={{
+                          color: "#00695c",
+                          display: "block",
+                          marginBottom: "10px",
+                          fontSize: "0.95rem",
+                        }}
+                      >
+                        Customer Attachments:
+                      </strong>
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns:
+                            "repeat(auto-fill, minmax(120px, 1fr))",
+                          gap: "10px",
+                        }}
+                      >
+                        {repair.multimedia.map((media, index) => (
+                          <div
+                            key={index}
+                            style={{
+                              position: "relative",
+                              borderRadius: "8px",
+                              overflow: "hidden",
+                              backgroundColor: "#f0f0f0",
+                              aspectRatio: "1",
+                              cursor: "pointer",
+                            }}
+                          >
+                            {media.type === "image" ? (
+                              <img
+                                src={media.url}
+                                alt="Customer attachment"
+                                style={{
+                                  width: "100%",
+                                  height: "100%",
+                                  objectFit: "cover",
+                                }}
+                                onClick={() => openFullscreen(media)}
+                              />
+                            ) : media.type === "video" ? (
+                              <div
+                                style={{
+                                  width: "100%",
+                                  height: "100%",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  backgroundColor: "#e0f2f1",
+                                  color: "#009688",
+                                  fontSize: "32px",
+                                }}
+                                onClick={() => window.open(media.url, "_blank")}
+                              >
+                                <FaVideo />
+                                <span
+                                  style={{
+                                    fontSize: "12px",
+                                    marginTop: "5px",
+                                    color: "#666",
+                                  }}
+                                >
+                                  Video
+                                </span>
+                              </div>
+                            ) : (
+                              <div
+                                style={{
+                                  width: "100%",
+                                  height: "100%",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  backgroundColor: "#e0f2f1",
+                                  color: "#009688",
+                                  fontSize: "32px",
+                                }}
+                              >
+                                <FaMicrophone />
+                                <span
+                                  style={{
+                                    fontSize: "12px",
+                                    marginTop: "5px",
+                                    color: "#666",
+                                  }}
+                                >
+                                  Audio
+                                </span>
+                                {playingAudio === media.url ? (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPlayingAudio(null);
+                                    }}
+                                    style={{
+                                      marginTop: "5px",
+                                      background: "#009688",
+                                      color: "white",
+                                      border: "none",
+                                      padding: "4px 8px",
+                                      borderRadius: "4px",
+                                      fontSize: "10px",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    <FaPause /> Stop
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPlayingAudio(media.url);
+                                    }}
+                                    style={{
+                                      marginTop: "5px",
+                                      background: "#009688",
+                                      color: "white",
+                                      border: "none",
+                                      padding: "4px 8px",
+                                      borderRadius: "4px",
+                                      fontSize: "10px",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    <FaPlay /> Play
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            <button
+                              onClick={() => openFullscreen(media)}
+                              style={{
+                                position: "absolute",
+                                top: "5px",
+                                right: "5px",
+                                width: "24px",
+                                height: "24px",
+                                borderRadius: "50%",
+                                backgroundColor: "rgba(255,255,255,0.9)",
+                                border: "none",
+                                color: "#009688",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                cursor: "pointer",
+                              }}
+                            >
+                              <FaExpand size={12} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Audio Player */}
+                      {playingAudio && (
+                        <div
+                          style={{
+                            marginTop: "10px",
+                            padding: "10px",
+                            backgroundColor: "#e0f2f1",
+                            borderRadius: "8px",
+                          }}
+                        >
+                          <audio
+                            controls
+                            autoPlay
+                            src={playingAudio}
+                            style={{ width: "100%" }}
+                            onEnded={() => setPlayingAudio(null)}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Mechanic Notes Section */}
                   <div style={{ marginBottom: "15px" }}>
@@ -1037,6 +1246,87 @@ const MechanicDashboard = () => {
         )}
       </div>
 
+      {/* Fullscreen Media Modal */}
+      {fullscreenMedia && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0,0,0,0.95)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 2000,
+            padding: "20px",
+          }}
+          onClick={() => setFullscreenMedia(null)}
+        >
+          <button
+            style={{
+              position: "absolute",
+              top: "20px",
+              right: "20px",
+              background: "white",
+              border: "none",
+              width: "40px",
+              height: "40px",
+              borderRadius: "50%",
+              fontSize: "20px",
+              cursor: "pointer",
+              zIndex: 2001,
+            }}
+            onClick={() => setFullscreenMedia(null)}
+          >
+            ×
+          </button>
+
+          {fullscreenMedia.type === "image" ? (
+            <img
+              src={fullscreenMedia.url}
+              alt="Fullscreen view"
+              style={{
+                maxWidth: "100%",
+                maxHeight: "90vh",
+                objectFit: "contain",
+              }}
+            />
+          ) : fullscreenMedia.type === "video" ? (
+            <video
+              src={fullscreenMedia.url}
+              controls
+              autoPlay
+              style={{
+                maxWidth: "100%",
+                maxHeight: "90vh",
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                backgroundColor: "white",
+                padding: "30px",
+                borderRadius: "15px",
+                maxWidth: "500px",
+                width: "100%",
+              }}
+            >
+              <h3 style={{ color: "#00695c", marginBottom: "20px" }}>
+                Audio Playback
+              </h3>
+              <audio
+                src={fullscreenMedia.url}
+                controls
+                autoPlay
+                style={{ width: "100%" }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
       <style>
         {`
           @keyframes spin {
@@ -1069,7 +1359,7 @@ const MechanicDashboard = () => {
           }
 
           input, textarea, select {
-            font-size: 16px !important; /* Prevents iOS zoom on focus */
+            font-size: 16px !important;
           }
 
           input:focus, textarea:focus, select:focus {
@@ -1079,7 +1369,7 @@ const MechanicDashboard = () => {
           }
 
           button {
-            touch-action: manipulation; /* Better touch handling */
+            touch-action: manipulation;
           }
 
           /* Tablet Styles */
@@ -1093,32 +1383,11 @@ const MechanicDashboard = () => {
               max-width: 95%;
             }
 
-            /* Dashboard Header */
             div[style*="background-color: #d32f2f"] {
               margin: 20px auto;
               max-width: 95%;
             }
 
-            /* Search and Filters */
-            div[style*="Search and Filter Controls"] {
-              display: flex !important;
-              flex-direction: row;
-              align-items: center;
-              gap: 20px;
-            }
-
-            div[style*="Search and Filter Controls"] > div {
-              flex: 1;
-            }
-
-            /* Repairs List */
-            div[style*="Repairs List"] {
-              grid-template-columns: 1fr;
-              max-width: 95%;
-              margin: 0 auto;
-            }
-
-            /* Status Update Buttons */
             div[style*="Update Status:"] > div {
               grid-template-columns: repeat(4, 1fr) !important;
             }
@@ -1148,7 +1417,6 @@ const MechanicDashboard = () => {
               max-width: 1200px;
             }
 
-            /* Customer Form Specific */
             form > div:first-child > div {
               grid-template-columns: 1fr 1fr !important;
               gap: 30px !important;
