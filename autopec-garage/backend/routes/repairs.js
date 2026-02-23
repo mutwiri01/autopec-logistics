@@ -14,7 +14,11 @@ router.post("/submit", upload.array("multimedia", 10), async (req, res) => {
     let repairData = {};
     if (req.body.repairData) {
       try {
-        repairData = JSON.parse(req.body.repairData);
+        // Only parse if it's actually a string
+        repairData =
+          typeof req.body.repairData === "string"
+            ? JSON.parse(req.body.repairData)
+            : req.body.repairData;
       } catch (e) {
         console.error("Error parsing repairData:", e);
         repairData = req.body;

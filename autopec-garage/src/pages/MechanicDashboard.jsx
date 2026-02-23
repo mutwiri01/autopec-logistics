@@ -55,9 +55,9 @@ const MechanicDashboard = () => {
       if (!isMounted) return;
 
       try {
-        const response = await getAllRepairs();
+        const data = await getAllRepairs(); // This now returns the array directly
         if (isMounted) {
-          setRepairs(response.data);
+          setRepairs(data || []); // Use the data directly, default to empty array
           setLastUpdated(new Date());
           setLoading(false);
         }
@@ -198,11 +198,12 @@ const MechanicDashboard = () => {
     }
   };
 
+  // Also update handleManualRefresh
   const handleManualRefresh = async () => {
     setLoading(true);
     try {
-      const response = await getAllRepairs();
-      setRepairs(response.data);
+      const data = await getAllRepairs();
+      setRepairs(data || []);
       setLastUpdated(new Date());
       setLoading(false);
     } catch (error) {
