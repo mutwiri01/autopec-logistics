@@ -17,7 +17,6 @@ router.post("/submit", upload.array("multimedia", 10), async (req, res) => {
         repairData = JSON.parse(req.body.repairData);
       } catch (e) {
         console.error("Error parsing repairData:", e);
-        // If parsing fails, try to use req.body directly
         repairData = req.body;
       }
     } else {
@@ -45,7 +44,7 @@ router.post("/submit", upload.array("multimedia", 10), async (req, res) => {
         multimedia.push({
           type: fileType,
           url: file.path,
-          publicId: file.filename,
+          publicId: file.filename, // CloudinaryStorage uses filename as public_id
           filename: file.originalname,
           uploadedAt: new Date(),
         });
@@ -67,9 +66,27 @@ router.post("/submit", upload.array("multimedia", 10), async (req, res) => {
     await repair.save();
     console.log("Repair saved successfully");
 
-    res.status(201).json(repair);
+    res.status(201).json({
+      success: true,
+      message: "Repair request submitted successfully",
+      repair: repair,
+    });
   } catch (error) {
     console.error("Error submitting repair:", error);
+
+    // If there was an error, try to clean up uploaded files from Cloudinary
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        try {
+          if (file.filename) {
+            await deleteMedia(file.filename);
+          }
+        } catch (deleteError) {
+          console.error("Error cleaning up file:", deleteError);
+        }
+      }
+    }
+
     res.status(500).json({
       error: error.message,
       details: "Failed to submit repair request",
@@ -150,7 +167,7 @@ router.delete("/:id", async (req, res) => {
       for (const media of repair.multimedia) {
         try {
           if (media.publicId) {
-            await deleteMedia(media.publicId);
+            await deleteMedia(media.publicId, media.type);
           }
         } catch (cloudinaryError) {
           console.error("Error deleting from Cloudinary:", cloudinaryError);
@@ -162,7 +179,10 @@ router.delete("/:id", async (req, res) => {
     // Delete the repair from database
     await Repair.findByIdAndDelete(req.params.id);
 
-    res.json({ message: "Repair deleted successfully" });
+    res.json({
+      success: true,
+      message: "Repair deleted successfully",
+    });
   } catch (error) {
     console.error("Error deleting repair:", error);
     res.status(500).json({ error: error.message });

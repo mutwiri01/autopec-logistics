@@ -13,27 +13,42 @@ cloudinary.config({
 // Create storage for Cloudinary
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
-  params: {
-    folder: "autopec",
-    resource_type: "auto",
-    allowed_formats: [
-      "jpg",
-      "jpeg",
-      "png",
-      "gif",
-      "mp4",
-      "mov",
-      "mp3",
-      "wav",
-      "webm",
-      "m4a",
-    ],
-    transformation: (req, file) => {
-      if (file.mimetype.startsWith("image/")) {
-        return { width: 1000, crop: "limit", quality: "auto" };
-      }
-      return null;
-    },
+  params: async (req, file) => {
+    // Determine folder and resource type based on file mimetype
+    let folder = "autopec";
+    let resourceType = "auto";
+    let format = undefined;
+
+    if (file.mimetype.startsWith("image/")) {
+      folder = "autopec/images";
+      resourceType = "image";
+      format = file.mimetype.split("/")[1];
+    } else if (file.mimetype.startsWith("video/")) {
+      folder = "autopec/videos";
+      resourceType = "video";
+    } else if (file.mimetype.startsWith("audio/")) {
+      folder = "autopec/audio";
+      resourceType = "video"; // Cloudinary uses 'video' for audio too
+    }
+
+    return {
+      folder: folder,
+      resource_type: resourceType,
+      allowed_formats: [
+        "jpg",
+        "jpeg",
+        "png",
+        "gif",
+        "mp4",
+        "mov",
+        "mp3",
+        "wav",
+        "webm",
+        "m4a",
+      ],
+      public_id: `${Date.now()}-${Math.round(Math.random() * 1e9)}`,
+      format: format,
+    };
   },
 });
 
@@ -58,11 +73,20 @@ const upload = multer({
 });
 
 // Delete media from Cloudinary
-const deleteMedia = async (publicId) => {
+const deleteMedia = async (publicId, resourceType = "image") => {
   try {
     if (!publicId) return null;
+
+    // Determine resource type based on publicId path or passed parameter
+    let type = resourceType;
+    if (publicId.includes("videos")) {
+      type = "video";
+    } else if (publicId.includes("audio")) {
+      type = "video"; // Audio uses video resource type in Cloudinary
+    }
+
     const result = await cloudinary.uploader.destroy(publicId, {
-      resource_type: "video", // This works for all types
+      resource_type: type,
     });
     return result;
   } catch (error) {
@@ -73,6 +97,6 @@ const deleteMedia = async (publicId) => {
 
 module.exports = {
   cloudinary,
-  upload, // Export as 'upload'
+  upload,
   deleteMedia,
 };

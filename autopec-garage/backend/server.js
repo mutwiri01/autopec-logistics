@@ -58,6 +58,21 @@ app.use((err, req, res, next) => {
   });
 });
 
+// Add this with your other routes
+app.get("/api", (req, res) => {
+  res.status(200).json({
+    message: "Autopec API",
+    endpoints: {
+      "GET /api/repairs": "Get all repairs",
+      "POST /api/repairs/submit": "Submit a new repair request",
+      "PUT /api/repairs/:id/status": "Update repair status",
+      "GET /api/repairs/track/:registration": "Track repair by registration",
+      "DELETE /api/repairs/:id": "Delete a repair",
+      "GET /api/repairs/status/:status": "Get repairs by status",
+    },
+  });
+});
+
 // MongoDB Connection - Fixed: Removed deprecated options
 mongoose
   .connect(process.env.MONGODB_URI)
