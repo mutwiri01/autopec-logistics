@@ -1,8 +1,15 @@
-/* eslint-disable no-unused-vars */
+
 import axios from "axios";
 
-const API_BASE_URL =
+/**
+ * ERROR FIX 1: URL Sanitization
+ * We extract the base URL and use .replace() to ensure that if the
+ * environment variable ends in "/" or "/api", they are stripped away.
+ * This prevents the final URL from becoming /api/api/...
+ */
+const rawBaseUrl =
   import.meta.env.VITE_API_URL || "https://autopec-logistics-btwc.vercel.app";
+const API_BASE_URL = rawBaseUrl.replace(/\/$/, "").replace(/\/api$/, "");
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -14,10 +21,8 @@ const api = axios.create({
 // Submit repair request with multimedia support
 export const submitRepairRequest = async (formData) => {
   try {
-    // Create FormData object for file upload
     const data = new FormData();
 
-    // Prepare repair data as JSON string
     const repairData = {
       registrationNumber: formData.registrationNumber,
       problemDescription: formData.problemDescription,
@@ -26,29 +31,27 @@ export const submitRepairRequest = async (formData) => {
       carModel: formData.carModel || "",
     };
 
-    // Append repair data as JSON string
     data.append("repairData", JSON.stringify(repairData));
 
-    // Append multimedia files if they exist
     if (formData.multimedia && formData.multimedia.length > 0) {
       formData.multimedia.forEach((file) => {
-        // Ensure file is a valid File object
         if (file instanceof File) {
           data.append("multimedia", file);
         }
       });
     }
 
-    // Make the POST request with multipart/form-data
-    const response = await axios.post(
-      `${API_BASE_URL}/api/repairs/submit`,
-      data,
-      {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
+    /**
+     * ERROR FIX 2: Correcting the Method Call
+     * Previously, this was using 'axios.post' and manually adding API_BASE_URL.
+     * We now use 'api.post' which correctly utilizes the baseURL
+     * defined in the instance above.
+     */
+    const response = await api.post("/api/repairs/submit", data, {
+      headers: {
+        "Content-Type": "multipart/form-data",
       },
-    );
+    });
 
     return response.data;
   } catch (error) {
@@ -60,8 +63,13 @@ export const submitRepairRequest = async (formData) => {
 // Get all repairs
 export const getAllRepairs = async () => {
   try {
+    /**
+     * ERROR FIX 3: Preventing path duplication
+     * By calling api.get("/api/repairs") against a cleaned baseURL,
+     * we ensure the request goes to /api/repairs instead of /api/api/repairs.
+     */
     const response = await api.get("/api/repairs");
-    return response;
+    return response.data;
   } catch (error) {
     console.error("Error in getAllRepairs:", error.response || error);
     throw error;
