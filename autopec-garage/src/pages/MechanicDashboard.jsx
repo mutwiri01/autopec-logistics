@@ -23,6 +23,7 @@ import {
   FaPlay,
   FaPause,
   FaExpand,
+  FaExclamationTriangle,
 } from "react-icons/fa";
 import {
   getAllRepairs,
@@ -34,6 +35,7 @@ import Header from "../components/Header";
 const MechanicDashboard = () => {
   const [repairs, setRepairs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [expandedRepairId, setExpandedRepairId] = useState(null);
   const [editingRepairId, setEditingRepairId] = useState(null);
   const [mechanicNotes, setMechanicNotes] = useState("");
@@ -46,6 +48,7 @@ const MechanicDashboard = () => {
   const [selectedMedia, setSelectedMedia] = useState(null);
   const [playingAudio, setPlayingAudio] = useState(null);
   const [fullscreenMedia, setFullscreenMedia] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -55,15 +58,17 @@ const MechanicDashboard = () => {
       if (!isMounted) return;
 
       try {
-        const data = await getAllRepairs(); // This now returns the array directly
+        setError(null);
+        const data = await getAllRepairs();
         if (isMounted) {
-          setRepairs(data || []); // Use the data directly, default to empty array
+          setRepairs(data || []);
           setLastUpdated(new Date());
           setLoading(false);
         }
       } catch (error) {
         console.error("Error fetching repairs:", error);
         if (isMounted) {
+          setError(error.message || "Failed to fetch repairs");
           setLoading(false);
         }
       }
@@ -75,7 +80,7 @@ const MechanicDashboard = () => {
       intervalId = setInterval(() => {
         loadAndRefreshRepairs();
         setRefreshCount((prev) => prev + 1);
-      }, 10000);
+      }, 30000); // Refresh every 30 seconds
     }
 
     return () => {
@@ -136,6 +141,7 @@ const MechanicDashboard = () => {
   };
 
   const saveNotes = async (repairId) => {
+    setActionLoading(true);
     try {
       const repair = repairs.find((r) => r._id === repairId);
       await updateRepairStatus(repairId, {
@@ -155,10 +161,13 @@ const MechanicDashboard = () => {
     } catch (error) {
       console.error("Error saving notes:", error);
       alert("Error saving notes. Please try again.");
+    } finally {
+      setActionLoading(false);
     }
   };
 
   const handleStatusUpdate = async (repairId, newStatus) => {
+    setActionLoading(true);
     try {
       const repair = repairs.find((r) => r._id === repairId);
       const notesToSave = repair.mechanicNotes || "";
@@ -176,16 +185,21 @@ const MechanicDashboard = () => {
     } catch (error) {
       console.error("Error updating repair status:", error);
       alert("Error updating status. Please try again.");
+    } finally {
+      setActionLoading(false);
     }
   };
 
   const handleDeleteRepair = async (repairId) => {
     if (
-      !window.confirm("Are you sure you want to delete this repair request?")
+      !window.confirm(
+        "Are you sure you want to delete this repair request? This action cannot be undone.",
+      )
     ) {
       return;
     }
 
+    setActionLoading(true);
     try {
       await deleteRepair(repairId);
       const updatedRepairs = repairs.filter(
@@ -195,19 +209,22 @@ const MechanicDashboard = () => {
     } catch (error) {
       console.error("Error deleting repair:", error);
       alert("Error deleting repair request. Please try again.");
+    } finally {
+      setActionLoading(false);
     }
   };
 
-  // Also update handleManualRefresh
   const handleManualRefresh = async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await getAllRepairs();
       setRepairs(data || []);
       setLastUpdated(new Date());
-      setLoading(false);
     } catch (error) {
       console.error("Error fetching repairs:", error);
+      setError(error.message || "Failed to fetch repairs");
+    } finally {
       setLoading(false);
     }
   };
@@ -245,6 +262,21 @@ const MechanicDashboard = () => {
         return "#4caf50";
       default:
         return "#666";
+    }
+  };
+
+  const getStatusLabel = (status) => {
+    switch (status) {
+      case "submitted":
+        return "Submitted";
+      case "in_garage":
+        return "In Garage";
+      case "in_progress":
+        return "In Progress";
+      case "completed":
+        return "Completed";
+      default:
+        return status;
     }
   };
 
@@ -403,10 +435,45 @@ const MechanicDashboard = () => {
             {lastUpdated.toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
+              second: "2-digit",
             })}
           </div>
         </div>
       </div>
+
+      {/* Error Display */}
+      {error && (
+        <div
+          style={{
+            backgroundColor: "#ffebee",
+            color: "#d32f2f",
+            padding: "15px",
+            borderRadius: "10px",
+            margin: "0 15px 20px 15px",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            border: "1px solid #ffcdd2",
+          }}
+        >
+          <FaExclamationTriangle />
+          <span>{error}</span>
+          <button
+            onClick={handleManualRefresh}
+            style={{
+              marginLeft: "auto",
+              background: "#d32f2f",
+              color: "white",
+              border: "none",
+              padding: "5px 15px",
+              borderRadius: "20px",
+              cursor: "pointer",
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Mobile Filter Toggle Button */}
       <div
@@ -537,6 +604,7 @@ const MechanicDashboard = () => {
 
             <button
               onClick={handleManualRefresh}
+              disabled={loading}
               style={{
                 flex: 1,
                 background: "#009688",
@@ -545,13 +613,14 @@ const MechanicDashboard = () => {
                 padding: "12px",
                 borderRadius: "50px",
                 fontWeight: "600",
-                cursor: "pointer",
+                cursor: loading ? "not-allowed" : "pointer",
                 transition: "all 0.3s ease",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 gap: "8px",
                 minWidth: "140px",
+                opacity: loading ? 0.5 : 1,
               }}
             >
               <FaSync
@@ -559,7 +628,7 @@ const MechanicDashboard = () => {
                   animation: loading ? "spin 1s linear infinite" : "none",
                 }}
               />
-              Refresh
+              {loading ? "Loading..." : "Refresh"}
             </button>
 
             <button
@@ -689,7 +758,7 @@ const MechanicDashboard = () => {
                       }}
                     >
                       {getStatusIcon(repair.status)}
-                      {repair.status.replace("_", " ")}
+                      {getStatusLabel(repair.status)}
                     </span>
                   </div>
                   <div style={{ color: "#666", fontSize: "0.85rem" }}>
@@ -938,45 +1007,6 @@ const MechanicDashboard = () => {
                                 >
                                   Audio
                                 </span>
-                                {playingAudio === media.url ? (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setPlayingAudio(null);
-                                    }}
-                                    style={{
-                                      marginTop: "5px",
-                                      background: "#009688",
-                                      color: "white",
-                                      border: "none",
-                                      padding: "4px 8px",
-                                      borderRadius: "4px",
-                                      fontSize: "10px",
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    <FaPause /> Stop
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setPlayingAudio(media.url);
-                                    }}
-                                    style={{
-                                      marginTop: "5px",
-                                      background: "#009688",
-                                      color: "white",
-                                      border: "none",
-                                      padding: "4px 8px",
-                                      borderRadius: "4px",
-                                      fontSize: "10px",
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    <FaPlay /> Play
-                                  </button>
-                                )}
                               </div>
                             )}
                             <button
@@ -1044,6 +1074,7 @@ const MechanicDashboard = () => {
                             e.stopPropagation();
                             startEditNotes(repair);
                           }}
+                          disabled={actionLoading}
                           style={{
                             background: "#ff9800",
                             color: "white",
@@ -1051,11 +1082,12 @@ const MechanicDashboard = () => {
                             padding: "6px 12px",
                             borderRadius: "50px",
                             fontWeight: "600",
-                            cursor: "pointer",
+                            cursor: actionLoading ? "not-allowed" : "pointer",
                             display: "flex",
                             alignItems: "center",
                             gap: "5px",
                             fontSize: "0.85rem",
+                            opacity: actionLoading ? 0.5 : 1,
                           }}
                         >
                           <FaEdit /> {repair.mechanicNotes ? "Edit" : "Add"}
@@ -1097,15 +1129,17 @@ const MechanicDashboard = () => {
                               padding: "8px 16px",
                               borderRadius: "50px",
                               fontWeight: "600",
-                              cursor: "pointer",
+                              cursor: actionLoading ? "not-allowed" : "pointer",
                               display: "flex",
                               alignItems: "center",
                               gap: "5px",
                               fontSize: "0.85rem",
+                              opacity: actionLoading ? 0.5 : 1,
                             }}
                             onClick={() => saveNotes(repair._id)}
+                            disabled={actionLoading}
                           >
-                            <FaSave /> Save
+                            <FaSave /> {actionLoading ? "Saving..." : "Save"}
                           </button>
                           <button
                             style={{
@@ -1115,13 +1149,15 @@ const MechanicDashboard = () => {
                               padding: "8px 16px",
                               borderRadius: "50px",
                               fontWeight: "600",
-                              cursor: "pointer",
+                              cursor: actionLoading ? "not-allowed" : "pointer",
                               display: "flex",
                               alignItems: "center",
                               gap: "5px",
                               fontSize: "0.85rem",
+                              opacity: actionLoading ? 0.5 : 1,
                             }}
                             onClick={cancelEdit}
+                            disabled={actionLoading}
                           >
                             <FaTimes /> Cancel
                           </button>
@@ -1179,20 +1215,27 @@ const MechanicDashboard = () => {
                             borderRadius: "8px",
                             fontWeight: "600",
                             cursor:
-                              repair.status === option.value
+                              repair.status === option.value || actionLoading
                                 ? "default"
                                 : "pointer",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
                             gap: "6px",
-                            opacity: repair.status === option.value ? 0.8 : 1,
+                            opacity:
+                              repair.status === option.value
+                                ? 0.8
+                                : actionLoading
+                                  ? 0.5
+                                  : 1,
                             fontSize: "0.85rem",
                           }}
                           onClick={() =>
                             handleStatusUpdate(repair._id, option.value)
                           }
-                          disabled={repair.status === option.value}
+                          disabled={
+                            repair.status === option.value || actionLoading
+                          }
                         >
                           {option.icon}
                           <span style={{ fontSize: "0.8rem" }}>
@@ -1223,6 +1266,7 @@ const MechanicDashboard = () => {
                         e.stopPropagation();
                         handleDeleteRepair(repair._id);
                       }}
+                      disabled={actionLoading}
                       style={{
                         background: "#ffebee",
                         color: "#d32f2f",
@@ -1230,11 +1274,12 @@ const MechanicDashboard = () => {
                         padding: "8px 16px",
                         borderRadius: "50px",
                         fontWeight: "600",
-                        cursor: "pointer",
+                        cursor: actionLoading ? "not-allowed" : "pointer",
                         display: "flex",
                         alignItems: "center",
                         gap: "6px",
                         fontSize: "0.85rem",
+                        opacity: actionLoading ? 0.5 : 1,
                       }}
                     >
                       <FaTrash /> Delete
@@ -1278,6 +1323,9 @@ const MechanicDashboard = () => {
               fontSize: "20px",
               cursor: "pointer",
               zIndex: 2001,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
             onClick={() => setFullscreenMedia(null)}
           >

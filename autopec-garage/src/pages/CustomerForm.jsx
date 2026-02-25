@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 import React, { useState, useRef } from "react";
 import {
   FaCar,
@@ -7,14 +8,17 @@ import {
   FaImage,
   FaVideo,
   FaMicrophone,
-  FaTrash,
-  FaCloudUploadAlt,
   FaTimes,
+  FaCloudUploadAlt,
   FaCamera,
-  FaPlay,
   FaStop,
+  FaExclamationTriangle,
 } from "react-icons/fa";
-import { submitRepairRequest } from "../services/api";
+import {
+  submitRepairRequest,
+  isValidMediaFile,
+  formatFileSize,
+} from "../services/api";
 import Header from "../components/Header";
 
 const CustomerForm = () => {
@@ -34,12 +38,18 @@ const CustomerForm = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [error, setError] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [fileErrors, setFileErrors] = useState([]);
 
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const streamRef = useRef(null);
   const recordingIntervalRef = useRef(null);
+
+  // Constants for limits
+  const MAX_FILES = 5;
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB for free tier
 
   const handleChange = (e) => {
     setFormData({
@@ -95,6 +105,16 @@ const CustomerForm = () => {
       const blob = new Blob(chunks, {
         type: captureType === "video" ? "video/mp4" : "audio/webm",
       });
+
+      // Check file size before adding
+      if (blob.size > MAX_FILE_SIZE) {
+        setError(
+          `Recording exceeds 10MB limit (${(blob.size / (1024 * 1024)).toFixed(2)}MB)`,
+        );
+        stopCapture();
+        return;
+      }
+
       const file = new File(
         [blob],
         `${captureType}_${Date.now()}.${captureType === "video" ? "mp4" : "webm"}`,
@@ -102,6 +122,13 @@ const CustomerForm = () => {
           type: captureType === "video" ? "video/mp4" : "audio/webm",
         },
       );
+
+      // Check total files limit
+      if (formData.multimedia.length >= MAX_FILES) {
+        setError(`Maximum ${MAX_FILES} files allowed`);
+        stopCapture();
+        return;
+      }
 
       setFormData((prev) => ({
         ...prev,
@@ -144,6 +171,22 @@ const CustomerForm = () => {
 
       canvas.toBlob(
         (blob) => {
+          // Check file size
+          if (blob.size > MAX_FILE_SIZE) {
+            setError(
+              `Photo exceeds 10MB limit (${(blob.size / (1024 * 1024)).toFixed(2)}MB)`,
+            );
+            stopCapture();
+            return;
+          }
+
+          // Check total files limit
+          if (formData.multimedia.length >= MAX_FILES) {
+            setError(`Maximum ${MAX_FILES} files allowed`);
+            stopCapture();
+            return;
+          }
+
           const file = new File([blob], `photo_${Date.now()}.jpg`, {
             type: "image/jpeg",
           });
@@ -174,29 +217,41 @@ const CustomerForm = () => {
 
   const handleFileUpload = (e) => {
     const files = Array.from(e.target.files);
-    const validFiles = files.filter((file) => {
-      const isValid =
-        file.type.startsWith("image/") ||
-        file.type.startsWith("video/") ||
-        file.type.startsWith("audio/");
-      const isWithinSize = file.size <= 50 * 1024 * 1024; // 50MB
+    const errors = [];
+    const validFiles = [];
 
-      if (!isValid) {
-        alert(
-          `${file.name} is not a supported file type. Please upload images, videos, or audio files.`,
-        );
-      }
-      if (!isWithinSize) {
-        alert(`${file.name} exceeds 50MB limit.`);
-      }
+    // Check total files limit
+    if (formData.multimedia.length + files.length > MAX_FILES) {
+      setError(
+        `Maximum ${MAX_FILES} files allowed. You have ${formData.multimedia.length} file(s) already.`,
+      );
+      return;
+    }
 
-      return isValid && isWithinSize;
+    files.forEach((file) => {
+      const validation = isValidMediaFile(file);
+
+      if (validation.valid) {
+        validFiles.push(file);
+      } else {
+        errors.push(validation.error);
+      }
     });
 
-    setFormData((prev) => ({
-      ...prev,
-      multimedia: [...prev.multimedia, ...validFiles],
-    }));
+    if (errors.length > 0) {
+      setFileErrors(errors);
+      setTimeout(() => setFileErrors([]), 5000);
+    }
+
+    if (validFiles.length > 0) {
+      setFormData((prev) => ({
+        ...prev,
+        multimedia: [...prev.multimedia, ...validFiles],
+      }));
+    }
+
+    // Clear input
+    e.target.value = "";
   };
 
   const removeFile = (index) => {
@@ -222,18 +277,29 @@ const CustomerForm = () => {
     setDragActive(false);
 
     const files = Array.from(e.dataTransfer.files);
-    const validFiles = files.filter((file) => {
-      return (
-        file.type.startsWith("image/") ||
-        file.type.startsWith("video/") ||
-        file.type.startsWith("audio/")
+    const validFiles = [];
+
+    // Check total files limit
+    if (formData.multimedia.length + files.length > MAX_FILES) {
+      setError(
+        `Maximum ${MAX_FILES} files allowed. You have ${formData.multimedia.length} file(s) already.`,
       );
+      return;
+    }
+
+    files.forEach((file) => {
+      const validation = isValidMediaFile(file);
+      if (validation.valid) {
+        validFiles.push(file);
+      }
     });
 
-    setFormData((prev) => ({
-      ...prev,
-      multimedia: [...prev.multimedia, ...validFiles],
-    }));
+    if (validFiles.length > 0) {
+      setFormData((prev) => ({
+        ...prev,
+        multimedia: [...prev.multimedia, ...validFiles],
+      }));
+    }
   };
 
   const getFileIcon = (file) => {
@@ -253,6 +319,7 @@ const CustomerForm = () => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setUploadProgress(0);
 
     try {
       // Validate required fields
@@ -262,8 +329,34 @@ const CustomerForm = () => {
         );
       }
 
+      // Validate registration number format (basic)
+      if (formData.registrationNumber.length < 3) {
+        throw new Error("Registration number must be at least 3 characters");
+      }
+
+      // Validate phone number if provided
+      if (formData.phoneNumber && formData.phoneNumber.length < 10) {
+        throw new Error("Please enter a valid phone number");
+      }
+
       console.log("Submitting form data:", formData);
+
+      // Simulate upload progress
+      const progressInterval = setInterval(() => {
+        setUploadProgress((prev) => {
+          if (prev >= 90) {
+            clearInterval(progressInterval);
+            return 90;
+          }
+          return prev + 10;
+        });
+      }, 500);
+
       await submitRepairRequest(formData);
+
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+
       console.log("Submission successful");
 
       setSubmitted(true);
@@ -275,13 +368,12 @@ const CustomerForm = () => {
         carModel: "",
         multimedia: [],
       });
+
+      setTimeout(() => setUploadProgress(0), 1000);
     } catch (error) {
       console.error("Error submitting request:", error);
-      setError(
-        error.response?.data?.error ||
-          error.message ||
-          "Error submitting request. Please try again.",
-      );
+      setError(error.message || "Error submitting request. Please try again.");
+      setUploadProgress(0);
     } finally {
       setLoading(false);
     }
@@ -405,9 +497,59 @@ const CustomerForm = () => {
               borderRadius: "8px",
               marginBottom: "20px",
               border: "1px solid #ffcdd2",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
             }}
           >
+            <FaExclamationTriangle />
             {error}
+          </div>
+        )}
+
+        {fileErrors.length > 0 && (
+          <div
+            style={{
+              backgroundColor: "#fff3e0",
+              color: "#e65100",
+              padding: "12px",
+              borderRadius: "8px",
+              marginBottom: "20px",
+              border: "1px solid #ffe0b2",
+            }}
+          >
+            {fileErrors.map((err, idx) => (
+              <div key={idx}>• {err}</div>
+            ))}
+          </div>
+        )}
+
+        {uploadProgress > 0 && uploadProgress < 100 && (
+          <div
+            style={{
+              marginBottom: "20px",
+              backgroundColor: "#e0f2f1",
+              borderRadius: "10px",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                height: "4px",
+                backgroundColor: "#009688",
+                width: `${uploadProgress}%`,
+                transition: "width 0.3s ease",
+              }}
+            />
+            <p
+              style={{
+                textAlign: "center",
+                padding: "8px",
+                fontSize: "0.9rem",
+              }}
+            >
+              Uploading... {uploadProgress}%
+            </p>
           </div>
         )}
 
@@ -457,6 +599,7 @@ const CustomerForm = () => {
                     boxSizing: "border-box",
                   }}
                   placeholder="e.g., KCA 123A"
+                  maxLength="20"
                 />
               </div>
 
@@ -594,7 +737,29 @@ const CustomerForm = () => {
                   }}
                 >
                   Add Photos, Videos, or Audio Recordings
+                  <span
+                    style={{
+                      fontSize: "0.8rem",
+                      marginLeft: "10px",
+                      color: "#666",
+                    }}
+                  >
+                    (Max {MAX_FILES} files, 10MB each)
+                  </span>
                 </label>
+
+                {/* File count indicator */}
+                {formData.multimedia.length > 0 && (
+                  <div
+                    style={{
+                      marginBottom: "10px",
+                      fontSize: "0.9rem",
+                      color: "#00695c",
+                    }}
+                  >
+                    {formData.multimedia.length} / {MAX_FILES} files selected
+                  </div>
+                )}
 
                 {/* Capture Buttons */}
                 <div
@@ -608,21 +773,29 @@ const CustomerForm = () => {
                   <button
                     type="button"
                     onClick={() => startCapture("photo")}
+                    disabled={formData.multimedia.length >= MAX_FILES}
                     style={{
                       background:
-                        "linear-gradient(135deg, #2196f3 0%, #1976d2 100%)",
+                        formData.multimedia.length >= MAX_FILES
+                          ? "#ccc"
+                          : "linear-gradient(135deg, #2196f3 0%, #1976d2 100%)",
                       color: "white",
                       border: "none",
                       padding: "15px 10px",
                       borderRadius: "10px",
                       fontWeight: "600",
-                      cursor: "pointer",
+                      cursor:
+                        formData.multimedia.length >= MAX_FILES
+                          ? "not-allowed"
+                          : "pointer",
                       display: "flex",
                       flexDirection: "column",
                       alignItems: "center",
                       gap: "5px",
                       fontSize: "0.9rem",
                       transition: "all 0.3s ease",
+                      opacity:
+                        formData.multimedia.length >= MAX_FILES ? 0.5 : 1,
                     }}
                   >
                     <FaCamera size={24} />
@@ -632,21 +805,29 @@ const CustomerForm = () => {
                   <button
                     type="button"
                     onClick={() => startCapture("video")}
+                    disabled={formData.multimedia.length >= MAX_FILES}
                     style={{
                       background:
-                        "linear-gradient(135deg, #f44336 0%, #d32f2f 100%)",
+                        formData.multimedia.length >= MAX_FILES
+                          ? "#ccc"
+                          : "linear-gradient(135deg, #f44336 0%, #d32f2f 100%)",
                       color: "white",
                       border: "none",
                       padding: "15px 10px",
                       borderRadius: "10px",
                       fontWeight: "600",
-                      cursor: "pointer",
+                      cursor:
+                        formData.multimedia.length >= MAX_FILES
+                          ? "not-allowed"
+                          : "pointer",
                       display: "flex",
                       flexDirection: "column",
                       alignItems: "center",
                       gap: "5px",
                       fontSize: "0.9rem",
                       transition: "all 0.3s ease",
+                      opacity:
+                        formData.multimedia.length >= MAX_FILES ? 0.5 : 1,
                     }}
                   >
                     <FaVideo size={24} />
@@ -656,21 +837,29 @@ const CustomerForm = () => {
                   <button
                     type="button"
                     onClick={() => startCapture("audio")}
+                    disabled={formData.multimedia.length >= MAX_FILES}
                     style={{
                       background:
-                        "linear-gradient(135deg, #4caf50 0%, #388e3c 100%)",
+                        formData.multimedia.length >= MAX_FILES
+                          ? "#ccc"
+                          : "linear-gradient(135deg, #4caf50 0%, #388e3c 100%)",
                       color: "white",
                       border: "none",
                       padding: "15px 10px",
                       borderRadius: "10px",
                       fontWeight: "600",
-                      cursor: "pointer",
+                      cursor:
+                        formData.multimedia.length >= MAX_FILES
+                          ? "not-allowed"
+                          : "pointer",
                       display: "flex",
                       flexDirection: "column",
                       alignItems: "center",
                       gap: "5px",
                       fontSize: "0.9rem",
                       transition: "all 0.3s ease",
+                      opacity:
+                        formData.multimedia.length >= MAX_FILES ? 0.5 : 1,
                     }}
                   >
                     <FaMicrophone size={24} />
@@ -684,7 +873,10 @@ const CustomerForm = () => {
                   onDragLeave={handleDrag}
                   onDragOver={handleDrag}
                   onDrop={handleDrop}
-                  onClick={() => fileInputRef.current.click()}
+                  onClick={() =>
+                    formData.multimedia.length < MAX_FILES &&
+                    fileInputRef.current.click()
+                  }
                   style={{
                     border: `2px dashed ${dragActive ? "#009688" : "#b2dfdb"}`,
                     borderRadius: "10px",
@@ -693,9 +885,13 @@ const CustomerForm = () => {
                     backgroundColor: dragActive
                       ? "rgba(0, 150, 136, 0.05)"
                       : "#f9f9f9",
-                    cursor: "pointer",
+                    cursor:
+                      formData.multimedia.length >= MAX_FILES
+                        ? "not-allowed"
+                        : "pointer",
                     transition: "all 0.3s ease",
                     marginBottom: "15px",
+                    opacity: formData.multimedia.length >= MAX_FILES ? 0.5 : 1,
                   }}
                 >
                   <input
@@ -705,6 +901,7 @@ const CustomerForm = () => {
                     accept="image/*,video/*,audio/*"
                     onChange={handleFileUpload}
                     style={{ display: "none" }}
+                    disabled={formData.multimedia.length >= MAX_FILES}
                   />
                   <FaCloudUploadAlt
                     style={{
@@ -720,10 +917,13 @@ const CustomerForm = () => {
                       fontWeight: "500",
                     }}
                   >
-                    Or drag & drop files here
+                    {formData.multimedia.length >= MAX_FILES
+                      ? "Maximum files reached"
+                      : "Or drag & drop files here"}
                   </p>
                   <p style={{ color: "#666", fontSize: "0.85rem" }}>
-                    Supports: Images, Videos, Audio (Max 50MB each)
+                    Supports: Images, Videos, Audio (Max 10MB each, {MAX_FILES}{" "}
+                    files max)
                   </p>
                 </div>
 
@@ -774,28 +974,15 @@ const CustomerForm = () => {
                             }}
                           >
                             {getFileIcon(file)}
-                            {file.type.startsWith("video/") && (
-                              <span
-                                style={{
-                                  fontSize: "10px",
-                                  marginTop: "5px",
-                                  color: "#666",
-                                }}
-                              >
-                                Video
-                              </span>
-                            )}
-                            {file.type.startsWith("audio/") && (
-                              <span
-                                style={{
-                                  fontSize: "10px",
-                                  marginTop: "5px",
-                                  color: "#666",
-                                }}
-                              >
-                                Audio
-                              </span>
-                            )}
+                            <span
+                              style={{
+                                fontSize: "10px",
+                                marginTop: "5px",
+                                color: "#666",
+                              }}
+                            >
+                              {(file.size / (1024 * 1024)).toFixed(1)}MB
+                            </span>
                           </div>
                         )}
 
@@ -842,7 +1029,9 @@ const CustomerForm = () => {
                 alignItems: "center",
                 justifyContent: "center",
                 gap: "10px",
-                background: "linear-gradient(135deg, #009688 0%, #00695c 100%)",
+                background: loading
+                  ? "#ccc"
+                  : "linear-gradient(135deg, #009688 0%, #00695c 100%)",
                 color: "white",
                 border: "none",
                 padding: "16px 30px",
