@@ -13,6 +13,7 @@ import {
   FaCamera,
   FaStop,
   FaExclamationTriangle,
+  FaInfoCircle,
 } from "react-icons/fa";
 import {
   submitRepairRequest,
@@ -40,6 +41,7 @@ const CustomerForm = () => {
   const [error, setError] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [fileErrors, setFileErrors] = useState([]);
+  const [totalSize, setTotalSize] = useState(0);
 
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
@@ -47,9 +49,10 @@ const CustomerForm = () => {
   const streamRef = useRef(null);
   const recordingIntervalRef = useRef(null);
 
-  // Constants for limits
-  const MAX_FILES = 5;
-  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB for free tier
+  // Constants for limits - ADJUSTED FOR FREE TIER
+  const MAX_FILES = 3; // Reduced to 3 for free tier
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB per file
+  const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB total
 
   const handleChange = (e) => {
     setFormData({
@@ -57,6 +60,12 @@ const CustomerForm = () => {
       [e.target.name]: e.target.value,
     });
   };
+
+  // Calculate total file size whenever multimedia changes
+  React.useEffect(() => {
+    const size = formData.multimedia.reduce((acc, file) => acc + file.size, 0);
+    setTotalSize(size);
+  }, [formData.multimedia]);
 
   // Open camera for photo/video capture
   const startCapture = async (type) => {
@@ -107,10 +116,26 @@ const CustomerForm = () => {
       });
 
       // Check file size before adding
+      const newTotalSize = totalSize + blob.size;
+      if (newTotalSize > MAX_TOTAL_SIZE) {
+        setError(
+          `Recording would exceed total 10MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(2)}MB, Added: ${(blob.size / (1024 * 1024)).toFixed(2)}MB`,
+        );
+        stopCapture();
+        return;
+      }
+
       if (blob.size > MAX_FILE_SIZE) {
         setError(
           `Recording exceeds 10MB limit (${(blob.size / (1024 * 1024)).toFixed(2)}MB)`,
         );
+        stopCapture();
+        return;
+      }
+
+      // Check total files limit
+      if (formData.multimedia.length >= MAX_FILES) {
+        setError(`Maximum ${MAX_FILES} files allowed`);
         stopCapture();
         return;
       }
@@ -122,13 +147,6 @@ const CustomerForm = () => {
           type: captureType === "video" ? "video/mp4" : "audio/webm",
         },
       );
-
-      // Check total files limit
-      if (formData.multimedia.length >= MAX_FILES) {
-        setError(`Maximum ${MAX_FILES} files allowed`);
-        stopCapture();
-        return;
-      }
 
       setFormData((prev) => ({
         ...prev,
@@ -172,6 +190,15 @@ const CustomerForm = () => {
       canvas.toBlob(
         (blob) => {
           // Check file size
+          const newTotalSize = totalSize + blob.size;
+          if (newTotalSize > MAX_TOTAL_SIZE) {
+            setError(
+              `Photo would exceed total 10MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(2)}MB, Added: ${(blob.size / (1024 * 1024)).toFixed(2)}MB`,
+            );
+            stopCapture();
+            return;
+          }
+
           if (blob.size > MAX_FILE_SIZE) {
             setError(
               `Photo exceeds 10MB limit (${(blob.size / (1024 * 1024)).toFixed(2)}MB)`,
@@ -197,7 +224,7 @@ const CustomerForm = () => {
           stopCapture();
         },
         "image/jpeg",
-        0.9,
+        0.8, // Reduced quality to save space
       );
     }
   };
@@ -224,6 +251,19 @@ const CustomerForm = () => {
     if (formData.multimedia.length + files.length > MAX_FILES) {
       setError(
         `Maximum ${MAX_FILES} files allowed. You have ${formData.multimedia.length} file(s) already.`,
+      );
+      return;
+    }
+
+    // Calculate new total size
+    let newTotalSize = totalSize;
+    files.forEach((file) => {
+      newTotalSize += file.size;
+    });
+
+    if (newTotalSize > MAX_TOTAL_SIZE) {
+      setError(
+        `Total file size would exceed 10MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(2)}MB, Added: ${((newTotalSize - totalSize) / (1024 * 1024)).toFixed(2)}MB`,
       );
       return;
     }
@@ -277,7 +317,6 @@ const CustomerForm = () => {
     setDragActive(false);
 
     const files = Array.from(e.dataTransfer.files);
-    const validFiles = [];
 
     // Check total files limit
     if (formData.multimedia.length + files.length > MAX_FILES) {
@@ -287,6 +326,20 @@ const CustomerForm = () => {
       return;
     }
 
+    // Calculate new total size
+    let newTotalSize = totalSize;
+    files.forEach((file) => {
+      newTotalSize += file.size;
+    });
+
+    if (newTotalSize > MAX_TOTAL_SIZE) {
+      setError(
+        `Total file size would exceed 10MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`,
+      );
+      return;
+    }
+
+    const validFiles = [];
     files.forEach((file) => {
       const validation = isValidMediaFile(file);
       if (validation.valid) {
@@ -339,6 +392,13 @@ const CustomerForm = () => {
         throw new Error("Please enter a valid phone number");
       }
 
+      // Validate total file size
+      if (totalSize > MAX_TOTAL_SIZE) {
+        throw new Error(
+          `Total file size exceeds 10MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`,
+        );
+      }
+
       console.log("Submitting form data:", formData);
 
       // Simulate upload progress
@@ -368,6 +428,7 @@ const CustomerForm = () => {
         carModel: "",
         multimedia: [],
       });
+      setTotalSize(0);
 
       setTimeout(() => setUploadProgress(0), 1000);
     } catch (error) {
@@ -744,22 +805,45 @@ const CustomerForm = () => {
                       color: "#666",
                     }}
                   >
-                    (Max {MAX_FILES} files, 10MB each)
+                    (Max {MAX_FILES} files, 10MB total)
                   </span>
                 </label>
 
-                {/* File count indicator */}
-                {formData.multimedia.length > 0 && (
+                {/* File count and size indicator */}
+                <div
+                  style={{
+                    marginBottom: "15px",
+                    padding: "10px",
+                    backgroundColor: "#e0f2f1",
+                    borderRadius: "8px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: "10px",
+                  }}
+                >
                   <div
                     style={{
-                      marginBottom: "10px",
-                      fontSize: "0.9rem",
-                      color: "#00695c",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "5px",
                     }}
                   >
-                    {formData.multimedia.length} / {MAX_FILES} files selected
+                    <FaInfoCircle style={{ color: "#009688" }} />
+                    <span style={{ fontSize: "0.9rem", color: "#00695c" }}>
+                      {formData.multimedia.length} / {MAX_FILES} files
+                    </span>
                   </div>
-                )}
+                  <div
+                    style={{
+                      fontSize: "0.9rem",
+                      color: totalSize > MAX_TOTAL_SIZE ? "#d32f2f" : "#00695c",
+                    }}
+                  >
+                    Total: {(totalSize / (1024 * 1024)).toFixed(2)}MB / 10MB
+                  </div>
+                </div>
 
                 {/* Capture Buttons */}
                 <div
@@ -773,10 +857,14 @@ const CustomerForm = () => {
                   <button
                     type="button"
                     onClick={() => startCapture("photo")}
-                    disabled={formData.multimedia.length >= MAX_FILES}
+                    disabled={
+                      formData.multimedia.length >= MAX_FILES ||
+                      totalSize >= MAX_TOTAL_SIZE
+                    }
                     style={{
                       background:
-                        formData.multimedia.length >= MAX_FILES
+                        formData.multimedia.length >= MAX_FILES ||
+                        totalSize >= MAX_TOTAL_SIZE
                           ? "#ccc"
                           : "linear-gradient(135deg, #2196f3 0%, #1976d2 100%)",
                       color: "white",
@@ -785,7 +873,8 @@ const CustomerForm = () => {
                       borderRadius: "10px",
                       fontWeight: "600",
                       cursor:
-                        formData.multimedia.length >= MAX_FILES
+                        formData.multimedia.length >= MAX_FILES ||
+                        totalSize >= MAX_TOTAL_SIZE
                           ? "not-allowed"
                           : "pointer",
                       display: "flex",
@@ -795,7 +884,10 @@ const CustomerForm = () => {
                       fontSize: "0.9rem",
                       transition: "all 0.3s ease",
                       opacity:
-                        formData.multimedia.length >= MAX_FILES ? 0.5 : 1,
+                        formData.multimedia.length >= MAX_FILES ||
+                        totalSize >= MAX_TOTAL_SIZE
+                          ? 0.5
+                          : 1,
                     }}
                   >
                     <FaCamera size={24} />
@@ -805,10 +897,14 @@ const CustomerForm = () => {
                   <button
                     type="button"
                     onClick={() => startCapture("video")}
-                    disabled={formData.multimedia.length >= MAX_FILES}
+                    disabled={
+                      formData.multimedia.length >= MAX_FILES ||
+                      totalSize >= MAX_TOTAL_SIZE
+                    }
                     style={{
                       background:
-                        formData.multimedia.length >= MAX_FILES
+                        formData.multimedia.length >= MAX_FILES ||
+                        totalSize >= MAX_TOTAL_SIZE
                           ? "#ccc"
                           : "linear-gradient(135deg, #f44336 0%, #d32f2f 100%)",
                       color: "white",
@@ -817,7 +913,8 @@ const CustomerForm = () => {
                       borderRadius: "10px",
                       fontWeight: "600",
                       cursor:
-                        formData.multimedia.length >= MAX_FILES
+                        formData.multimedia.length >= MAX_FILES ||
+                        totalSize >= MAX_TOTAL_SIZE
                           ? "not-allowed"
                           : "pointer",
                       display: "flex",
@@ -827,7 +924,10 @@ const CustomerForm = () => {
                       fontSize: "0.9rem",
                       transition: "all 0.3s ease",
                       opacity:
-                        formData.multimedia.length >= MAX_FILES ? 0.5 : 1,
+                        formData.multimedia.length >= MAX_FILES ||
+                        totalSize >= MAX_TOTAL_SIZE
+                          ? 0.5
+                          : 1,
                     }}
                   >
                     <FaVideo size={24} />
@@ -837,10 +937,14 @@ const CustomerForm = () => {
                   <button
                     type="button"
                     onClick={() => startCapture("audio")}
-                    disabled={formData.multimedia.length >= MAX_FILES}
+                    disabled={
+                      formData.multimedia.length >= MAX_FILES ||
+                      totalSize >= MAX_TOTAL_SIZE
+                    }
                     style={{
                       background:
-                        formData.multimedia.length >= MAX_FILES
+                        formData.multimedia.length >= MAX_FILES ||
+                        totalSize >= MAX_TOTAL_SIZE
                           ? "#ccc"
                           : "linear-gradient(135deg, #4caf50 0%, #388e3c 100%)",
                       color: "white",
@@ -849,7 +953,8 @@ const CustomerForm = () => {
                       borderRadius: "10px",
                       fontWeight: "600",
                       cursor:
-                        formData.multimedia.length >= MAX_FILES
+                        formData.multimedia.length >= MAX_FILES ||
+                        totalSize >= MAX_TOTAL_SIZE
                           ? "not-allowed"
                           : "pointer",
                       display: "flex",
@@ -859,7 +964,10 @@ const CustomerForm = () => {
                       fontSize: "0.9rem",
                       transition: "all 0.3s ease",
                       opacity:
-                        formData.multimedia.length >= MAX_FILES ? 0.5 : 1,
+                        formData.multimedia.length >= MAX_FILES ||
+                        totalSize >= MAX_TOTAL_SIZE
+                          ? 0.5
+                          : 1,
                     }}
                   >
                     <FaMicrophone size={24} />
@@ -875,6 +983,7 @@ const CustomerForm = () => {
                   onDrop={handleDrop}
                   onClick={() =>
                     formData.multimedia.length < MAX_FILES &&
+                    totalSize < MAX_TOTAL_SIZE &&
                     fileInputRef.current.click()
                   }
                   style={{
@@ -886,12 +995,17 @@ const CustomerForm = () => {
                       ? "rgba(0, 150, 136, 0.05)"
                       : "#f9f9f9",
                     cursor:
-                      formData.multimedia.length >= MAX_FILES
+                      formData.multimedia.length >= MAX_FILES ||
+                      totalSize >= MAX_TOTAL_SIZE
                         ? "not-allowed"
                         : "pointer",
                     transition: "all 0.3s ease",
                     marginBottom: "15px",
-                    opacity: formData.multimedia.length >= MAX_FILES ? 0.5 : 1,
+                    opacity:
+                      formData.multimedia.length >= MAX_FILES ||
+                      totalSize >= MAX_TOTAL_SIZE
+                        ? 0.5
+                        : 1,
                   }}
                 >
                   <input
@@ -901,7 +1015,10 @@ const CustomerForm = () => {
                     accept="image/*,video/*,audio/*"
                     onChange={handleFileUpload}
                     style={{ display: "none" }}
-                    disabled={formData.multimedia.length >= MAX_FILES}
+                    disabled={
+                      formData.multimedia.length >= MAX_FILES ||
+                      totalSize >= MAX_TOTAL_SIZE
+                    }
                   />
                   <FaCloudUploadAlt
                     style={{
@@ -917,12 +1034,13 @@ const CustomerForm = () => {
                       fontWeight: "500",
                     }}
                   >
-                    {formData.multimedia.length >= MAX_FILES
-                      ? "Maximum files reached"
+                    {formData.multimedia.length >= MAX_FILES ||
+                    totalSize >= MAX_TOTAL_SIZE
+                      ? "Maximum files/size reached"
                       : "Or drag & drop files here"}
                   </p>
                   <p style={{ color: "#666", fontSize: "0.85rem" }}>
-                    Supports: Images, Videos, Audio (Max 10MB each, {MAX_FILES}{" "}
+                    Supports: Images, Videos, Audio (Max 10MB total, {MAX_FILES}{" "}
                     files max)
                   </p>
                 </div>
@@ -1023,26 +1141,30 @@ const CustomerForm = () => {
             <button
               type="submit"
               className="btn-primary"
-              disabled={loading}
+              disabled={loading || totalSize > MAX_TOTAL_SIZE}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
                 gap: "10px",
-                background: loading
-                  ? "#ccc"
-                  : "linear-gradient(135deg, #009688 0%, #00695c 100%)",
+                background:
+                  loading || totalSize > MAX_TOTAL_SIZE
+                    ? "#ccc"
+                    : "linear-gradient(135deg, #009688 0%, #00695c 100%)",
                 color: "white",
                 border: "none",
                 padding: "16px 30px",
                 borderRadius: "50px",
                 fontWeight: "600",
-                cursor: loading ? "not-allowed" : "pointer",
+                cursor:
+                  loading || totalSize > MAX_TOTAL_SIZE
+                    ? "not-allowed"
+                    : "pointer",
                 transition: "all 0.3s ease",
                 fontSize: "1rem",
                 width: "100%",
                 maxWidth: "400px",
-                opacity: loading ? 0.7 : 1,
+                opacity: loading || totalSize > MAX_TOTAL_SIZE ? 0.7 : 1,
               }}
             >
               <FaPaperPlane />

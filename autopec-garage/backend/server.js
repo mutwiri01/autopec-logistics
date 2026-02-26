@@ -6,12 +6,10 @@ require("dotenv").config();
 
 const app = express();
 
-// Middleware - Updated CORS to allow all origins with better error handling
+// Middleware - Fixed CORS configuration
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
-  "https://autopec-logistics.vercel.app",
-  "https://autopec-logistics-btwc.vercel.app",
   "https://autopec-logistics.vercel.app",
   "https://autopec-logistics-btwc.vercel.app",
 ];
@@ -22,11 +20,16 @@ app.use(
       // Allow requests with no origin (like mobile apps, curl, etc)
       if (!origin) return callback(null, true);
 
-      if (allowedOrigins.indexOf(origin) === -1) {
+      // Check if origin is allowed
+      if (
+        allowedOrigins.indexOf(origin) !== -1 ||
+        process.env.NODE_ENV !== "production"
+      ) {
+        callback(null, true);
+      } else {
         console.log("CORS blocked origin:", origin);
-        return callback(null, true); // Temporarily allow all for debugging
+        callback(new Error("Not allowed by CORS"));
       }
-      return callback(null, true);
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -76,9 +79,22 @@ app.use((err, req, res, next) => {
 
   // Handle specific error types
   if (err.name === "MulterError") {
+    let message = err.message;
+    let code = err.code;
+
+    // More user-friendly messages
+    if (err.code === "LIMIT_FILE_SIZE") {
+      message =
+        "File too large. Maximum file size is 10MB for images, 100MB for videos.";
+    } else if (err.code === "LIMIT_FILE_COUNT") {
+      message = "Too many files. Maximum 3 files allowed per request.";
+    } else if (err.code === "LIMIT_UNEXPECTED_FILE") {
+      message = "Unexpected file field. Please check your upload.";
+    }
+
     return res.status(400).json({
       error: "File upload error",
-      details: err.message,
+      details: message,
       code: err.code,
     });
   }
@@ -87,6 +103,14 @@ app.use((err, req, res, next) => {
     return res.status(400).json({
       error: "Validation error",
       details: err.message,
+    });
+  }
+
+  // Handle CORS errors
+  if (err.message === "Not allowed by CORS") {
+    return res.status(403).json({
+      error: "CORS error",
+      details: "Origin not allowed",
     });
   }
 
@@ -102,8 +126,8 @@ const connectDB = async () => {
     await mongoose.connect(process.env.MONGODB_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
-      socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
     });
     console.log("✅ Connected to MongoDB successfully");
   } catch (err) {

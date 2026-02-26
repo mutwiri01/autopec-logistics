@@ -5,13 +5,17 @@ const {
   upload,
   deleteMedia,
   validateFile,
+  validateUpload,
   MAX_FILES_PER_REQUEST,
+  MAX_TOTAL_SIZE,
 } = require("../config/cloudinary");
 
 // Submit new repair request with multimedia
 router.post("/submit", (req, res, next) => {
-  // Handle the upload with error handling
-  upload.array("multimedia", MAX_FILES_PER_REQUEST)(req, res, (err) => {
+  // First validate total size if we have files
+  const uploadMiddleware = upload.array("multimedia", MAX_FILES_PER_REQUEST);
+
+  uploadMiddleware(req, res, (err) => {
     if (err) {
       console.error("Upload error:", err);
 
@@ -19,8 +23,7 @@ router.post("/submit", (req, res, next) => {
       if (err.code === "LIMIT_FILE_SIZE") {
         return res.status(400).json({
           error: "File too large",
-          details:
-            "Each file must be less than 10MB (Cloudinary free tier limit)",
+          details: "Maximum file size: 10MB for images, 100MB for videos",
         });
       }
 
@@ -31,10 +34,38 @@ router.post("/submit", (req, res, next) => {
         });
       }
 
+      if (err.code === "LIMIT_FIELD_KEY") {
+        return res.status(400).json({
+          error: "Invalid field name",
+          details: "Please use 'multimedia' as the field name for files",
+        });
+      }
+
       return res.status(400).json({
         error: "File upload error",
         details: err.message,
       });
+    }
+
+    // Now validate total size of all files
+    if (req.files && req.files.length > 0) {
+      let totalSize = 0;
+      for (const file of req.files) {
+        totalSize += file.size;
+      }
+
+      if (totalSize > MAX_TOTAL_SIZE) {
+        // Clean up uploaded files
+        Promise.all(
+          req.files.map((file) => deleteMedia(file.filename).catch(() => {})),
+        ).then(() => {
+          return res.status(400).json({
+            error: "Total file size exceeds limit",
+            details: `Total size of all files must be less than ${MAX_TOTAL_SIZE / (1024 * 1024)}MB. Current total: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`,
+          });
+        });
+        return;
+      }
     }
 
     // Proceed with the rest of the submission

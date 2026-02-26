@@ -17,7 +17,9 @@ const api = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
-  timeout: 30000, // 30 second timeout for file uploads
+  timeout: 60000, // 60 second timeout for file uploads (increased from 30)
+  maxContentLength: 50 * 1024 * 1024, // 50MB max content length
+  maxBodyLength: 50 * 1024 * 1024, // 50MB max body length
 });
 
 // Add request interceptor for logging
@@ -55,8 +57,8 @@ api.interceptors.response.use(
 
       // Enhance error message with server response
       error.message =
-        error.response.data?.error ||
         error.response.data?.details ||
+        error.response.data?.error ||
         error.message;
     } else if (error.request) {
       // The request was made but no response was received
@@ -92,15 +94,36 @@ export const submitRepairRequest = async (formData) => {
     if (formData.multimedia && formData.multimedia.length > 0) {
       console.log(`📎 Adding ${formData.multimedia.length} files...`);
 
-      // Check file sizes (10MB limit for Cloudinary free tier)
-      const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-      const oversizedFiles = formData.multimedia.filter(
-        (file) => file.size > MAX_FILE_SIZE,
-      );
+      // Check file sizes (10MB limit for Cloudinary free tier total)
+      const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB per file
+      const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB total
+
+      let totalSize = 0;
+      const oversizedFiles = [];
+
+      formData.multimedia.forEach((file) => {
+        totalSize += file.size;
+        if (file.size > MAX_FILE_SIZE) {
+          oversizedFiles.push(file.name);
+        }
+      });
 
       if (oversizedFiles.length > 0) {
-        const fileNames = oversizedFiles.map((f) => f.name).join(", ");
+        const fileNames = oversizedFiles.join(", ");
         throw new Error(`Files exceed 10MB limit: ${fileNames}`);
+      }
+
+      if (totalSize > MAX_TOTAL_SIZE) {
+        throw new Error(
+          `Total file size exceeds 10MB limit. Current total: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`,
+        );
+      }
+
+      // Limit number of files to 3 for free tier reliability
+      if (formData.multimedia.length > 3) {
+        throw new Error(
+          "Maximum 3 files allowed per submission (free tier limit)",
+        );
       }
 
       formData.multimedia.forEach((file) => {
@@ -124,10 +147,12 @@ export const submitRepairRequest = async (formData) => {
         "Content-Type": "multipart/form-data",
       },
       onUploadProgress: (progressEvent) => {
-        const percentCompleted = Math.round(
-          (progressEvent.loaded * 100) / progressEvent.total,
-        );
-        console.log(`Upload progress: ${percentCompleted}%`);
+        if (progressEvent.total) {
+          const percentCompleted = Math.round(
+            (progressEvent.loaded * 100) / progressEvent.total,
+          );
+          console.log(`Upload progress: ${percentCompleted}%`);
+        }
       },
     });
 

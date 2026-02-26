@@ -10,9 +10,12 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Free tier limits
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB for free tier
-const MAX_FILES_PER_REQUEST = 5; // Limit number of files per request
+// Free tier limits - ADJUSTED FOR FREE TIER
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB total per upload (free tier limit)
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB for images
+const MAX_VIDEO_SIZE = 100 * 1024 * 1024; // 100MB for videos (but free tier may still limit)
+const MAX_FILES_PER_REQUEST = 3; // Reduced to 3 files max for free tier reliability
+const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB total for all files combined
 
 // Check if Cloudinary is properly configured
 if (
@@ -25,7 +28,7 @@ if (
   );
 }
 
-// Configure storage for different file types
+// Configure storage for different file types - SIMPLIFIED FOR FREE TIER
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: async (req, file) => {
@@ -42,10 +45,20 @@ const storage = new CloudinaryStorage({
     } else if (file.mimetype.startsWith("video/")) {
       folder = "repairs/videos";
       resource_type = "video";
-      // For videos, we'll let Cloudinary handle the format
     } else if (file.mimetype.startsWith("audio/")) {
       folder = "repairs/audio";
       resource_type = "video"; // Audio files use video resource type in Cloudinary
+    }
+
+    // SIMPLIFIED TRANSFORMATIONS FOR FREE TIER - less processing = fewer errors
+    const transformation = [];
+
+    if (file.mimetype.startsWith("image/")) {
+      // Only resize if needed, no quality auto-optimization which can cause issues
+      transformation.push({ width: 1200, height: 1200, crop: "limit" });
+    } else if (file.mimetype.startsWith("video/")) {
+      // Minimal video processing
+      transformation.push({ width: 1280, height: 720, crop: "limit" });
     }
 
     return {
@@ -53,42 +66,26 @@ const storage = new CloudinaryStorage({
       resource_type: resource_type,
       public_id: `${Date.now()}-${Math.round(Math.random() * 1e9)}`,
       format: format,
-      // Add transformation for images to optimize storage
-      ...(file.mimetype.startsWith("image/") && {
-        transformation: [
-          { width: 1200, height: 1200, crop: "limit" }, // Limit image size
-          { quality: "auto:good" }, // Auto optimize quality
-        ],
-      }),
-      // For videos, limit dimensions
-      ...(file.mimetype.startsWith("video/") && {
-        transformation: [
-          { width: 1280, height: 720, crop: "limit" }, // Limit video size
-          { quality: "auto:good" },
-          { video_codec: "h264" }, // Standard codec
-        ],
-      }),
+      transformation: transformation.length > 0 ? transformation : undefined,
+      // Add timeout to prevent hanging
+      timeout: 60000, // 60 seconds timeout
     };
   },
 });
 
-// File filter function
+// File filter function - STRICTER FOR FREE TIER
 const fileFilter = (req, file, cb) => {
-  // Check file type
+  // Check file type - limited to common formats for free tier
   const allowedTypes = [
     "image/jpeg",
     "image/jpg",
     "image/png",
-    "image/gif",
     "image/webp",
     "video/mp4",
-    "video/mpeg",
     "video/quicktime",
     "audio/mpeg",
     "audio/mp3",
     "audio/wav",
-    "audio/ogg",
-    "audio/webm",
   ];
 
   if (allowedTypes.includes(file.mimetype)) {
@@ -96,11 +93,51 @@ const fileFilter = (req, file, cb) => {
   } else {
     cb(
       new Error(
-        `Invalid file type: ${file.mimetype}. Allowed types: images (JPEG, PNG, GIF, WEBP), videos (MP4), audio (MP3, WAV, OGG, WEBM)`,
+        `Invalid file type: ${file.mimetype}. Allowed types: JPEG, PNG, WEBP images, MP4 videos, MP3/WAV audio`,
       ),
       false,
     );
   }
+};
+
+// Custom validation middleware to check total size before upload
+const validateUpload = (req, res, next) => {
+  if (!req.files && !req.file) {
+    return next();
+  }
+
+  const files = req.files || (req.file ? [req.file] : []);
+  let totalSize = 0;
+
+  for (const file of files) {
+    totalSize += file.size;
+  }
+
+  // Check total size
+  if (totalSize > MAX_TOTAL_SIZE) {
+    return res.status(400).json({
+      error: "Total file size exceeds limit",
+      details: `Total size of all files must be less than ${MAX_TOTAL_SIZE / (1024 * 1024)}MB. Current total: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`,
+    });
+  }
+
+  // Check individual file sizes
+  for (const file of files) {
+    if (file.mimetype.startsWith("image/") && file.size > MAX_IMAGE_SIZE) {
+      return res.status(400).json({
+        error: "Image file too large",
+        details: `Image must be less than ${MAX_IMAGE_SIZE / (1024 * 1024)}MB`,
+      });
+    }
+    if (file.mimetype.startsWith("video/") && file.size > MAX_VIDEO_SIZE) {
+      return res.status(400).json({
+        error: "Video file too large",
+        details: `Video must be less than ${MAX_VIDEO_SIZE / (1024 * 1024)}MB`,
+      });
+    }
+  }
+
+  next();
 };
 
 // Create multer upload middleware with limits
@@ -108,8 +145,9 @@ const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: MAX_FILE_SIZE,
+    fileSize: MAX_VIDEO_SIZE, // Allow up to video size, we'll check per type
     files: MAX_FILES_PER_REQUEST,
+    fieldSize: 10 * 1024 * 1024, // 10MB for text fields
   },
 });
 
@@ -127,7 +165,7 @@ const deleteMedia = async (publicId, resourceType = "image") => {
 
     const result = await cloudinary.uploader.destroy(publicId, {
       resource_type: resourceType,
-      invalidate: true, // Invalidate CDN cache
+      invalidate: true,
     });
 
     console.log("Cloudinary deletion result:", result);
@@ -141,7 +179,6 @@ const deleteMedia = async (publicId, resourceType = "image") => {
     return result;
   } catch (error) {
     console.error("❌ Error deleting from Cloudinary:", error);
-    // Don't throw error, just log it
     return null;
   }
 };
@@ -150,10 +187,22 @@ const deleteMedia = async (publicId, resourceType = "image") => {
 const validateFile = (file) => {
   const errors = [];
 
-  // Check file size
-  if (file.size > MAX_FILE_SIZE) {
+  // Check file size based on type
+  if (file.mimetype.startsWith("image/") && file.size > MAX_IMAGE_SIZE) {
     errors.push(
-      `File ${file.originalname} exceeds the 10MB limit (${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
+      `Image ${file.originalname} exceeds the ${MAX_IMAGE_SIZE / (1024 * 1024)}MB limit (${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
+    );
+  } else if (file.mimetype.startsWith("video/") && file.size > MAX_VIDEO_SIZE) {
+    errors.push(
+      `Video ${file.originalname} exceeds the ${MAX_VIDEO_SIZE / (1024 * 1024)}MB limit (${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
+    );
+  } else if (
+    !file.mimetype.startsWith("image/") &&
+    !file.mimetype.startsWith("video/") &&
+    file.size > MAX_FILE_SIZE
+  ) {
+    errors.push(
+      `File ${file.originalname} exceeds the ${MAX_FILE_SIZE / (1024 * 1024)}MB limit (${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
     );
   }
 
@@ -162,16 +211,12 @@ const validateFile = (file) => {
     "image/jpeg",
     "image/jpg",
     "image/png",
-    "image/gif",
     "image/webp",
     "video/mp4",
-    "video/mpeg",
     "video/quicktime",
     "audio/mpeg",
     "audio/mp3",
     "audio/wav",
-    "audio/ogg",
-    "audio/webm",
   ];
 
   if (!allowedTypes.includes(file.mimetype)) {
@@ -191,6 +236,10 @@ module.exports = {
   upload,
   deleteMedia,
   validateFile,
+  validateUpload,
   MAX_FILE_SIZE,
+  MAX_IMAGE_SIZE,
+  MAX_VIDEO_SIZE,
   MAX_FILES_PER_REQUEST,
+  MAX_TOTAL_SIZE,
 };
