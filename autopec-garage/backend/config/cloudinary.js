@@ -10,11 +10,12 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Free tier limits - ADJUSTED FOR FREE TIER
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB total per upload (free tier limit)
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB for images
-const MAX_VIDEO_SIZE = 100 * 1024 * 1024; // 100MB for videos (but free tier may still limit)
-const MAX_FILES_PER_REQUEST = 3; // Reduced to 3 files max for free tier reliability
+// Free tier limits - UPDATED FOR FREE PLAN
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB total per upload (Cloudinary free tier limit)
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB for images (reduced for free tier)
+const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB for videos (reduced for free tier)
+const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB for audio
+const MAX_FILES_PER_REQUEST = 3; // Max 3 files per request
 const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB total for all files combined
 
 // Check if Cloudinary is properly configured
@@ -50,15 +51,25 @@ const storage = new CloudinaryStorage({
       resource_type = "video"; // Audio files use video resource type in Cloudinary
     }
 
-    // SIMPLIFIED TRANSFORMATIONS FOR FREE TIER - less processing = fewer errors
+    // SIMPLIFIED TRANSFORMATIONS FOR FREE TIER
     const transformation = [];
 
     if (file.mimetype.startsWith("image/")) {
-      // Only resize if needed, no quality auto-optimization which can cause issues
-      transformation.push({ width: 1200, height: 1200, crop: "limit" });
+      // Compress images for free tier
+      transformation.push({
+        width: 1024,
+        height: 1024,
+        crop: "limit",
+        quality: "auto:good",
+      });
     } else if (file.mimetype.startsWith("video/")) {
-      // Minimal video processing
-      transformation.push({ width: 1280, height: 720, crop: "limit" });
+      // Compress videos
+      transformation.push({
+        width: 854,
+        height: 480,
+        crop: "limit",
+        quality: "auto:good",
+      });
     }
 
     return {
@@ -67,8 +78,7 @@ const storage = new CloudinaryStorage({
       public_id: `${Date.now()}-${Math.round(Math.random() * 1e9)}`,
       format: format,
       transformation: transformation.length > 0 ? transformation : undefined,
-      // Add timeout to prevent hanging
-      timeout: 60000, // 60 seconds timeout
+      timeout: 30000, // 30 seconds timeout
     };
   },
 });
@@ -83,9 +93,11 @@ const fileFilter = (req, file, cb) => {
     "image/webp",
     "video/mp4",
     "video/quicktime",
+    "video/webm",
     "audio/mpeg",
     "audio/mp3",
     "audio/wav",
+    "audio/webm",
   ];
 
   if (allowedTypes.includes(file.mimetype)) {
@@ -135,6 +147,12 @@ const validateUpload = (req, res, next) => {
         details: `Video must be less than ${MAX_VIDEO_SIZE / (1024 * 1024)}MB`,
       });
     }
+    if (file.mimetype.startsWith("audio/") && file.size > MAX_AUDIO_SIZE) {
+      return res.status(400).json({
+        error: "Audio file too large",
+        details: `Audio must be less than ${MAX_AUDIO_SIZE / (1024 * 1024)}MB`,
+      });
+    }
   }
 
   next();
@@ -147,7 +165,7 @@ const upload = multer({
   limits: {
     fileSize: MAX_VIDEO_SIZE, // Allow up to video size, we'll check per type
     files: MAX_FILES_PER_REQUEST,
-    fieldSize: 10 * 1024 * 1024, // 10MB for text fields
+    fieldSize: 5 * 1024 * 1024, // 5MB for text fields
   },
 });
 
@@ -196,13 +214,9 @@ const validateFile = (file) => {
     errors.push(
       `Video ${file.originalname} exceeds the ${MAX_VIDEO_SIZE / (1024 * 1024)}MB limit (${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
     );
-  } else if (
-    !file.mimetype.startsWith("image/") &&
-    !file.mimetype.startsWith("video/") &&
-    file.size > MAX_FILE_SIZE
-  ) {
+  } else if (file.mimetype.startsWith("audio/") && file.size > MAX_AUDIO_SIZE) {
     errors.push(
-      `File ${file.originalname} exceeds the ${MAX_FILE_SIZE / (1024 * 1024)}MB limit (${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
+      `Audio ${file.originalname} exceeds the ${MAX_AUDIO_SIZE / (1024 * 1024)}MB limit (${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
     );
   }
 
@@ -214,9 +228,11 @@ const validateFile = (file) => {
     "image/webp",
     "video/mp4",
     "video/quicktime",
+    "video/webm",
     "audio/mpeg",
     "audio/mp3",
     "audio/wav",
+    "audio/webm",
   ];
 
   if (!allowedTypes.includes(file.mimetype)) {
@@ -240,6 +256,7 @@ module.exports = {
   MAX_FILE_SIZE,
   MAX_IMAGE_SIZE,
   MAX_VIDEO_SIZE,
+  MAX_AUDIO_SIZE,
   MAX_FILES_PER_REQUEST,
   MAX_TOTAL_SIZE,
 };

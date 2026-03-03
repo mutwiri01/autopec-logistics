@@ -37,9 +37,9 @@ app.use(
   }),
 );
 
-// Increase payload limit for file uploads
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+// Increase payload limit for file uploads - ADJUSTED FOR FREE TIER
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // Root Route
 app.get("/", (req, res) => {
@@ -85,7 +85,7 @@ app.use((err, req, res, next) => {
     // More user-friendly messages
     if (err.code === "LIMIT_FILE_SIZE") {
       message =
-        "File too large. Maximum file size is 10MB for images, 100MB for videos.";
+        "File too large. Maximum file size is 10MB total for all files.";
     } else if (err.code === "LIMIT_FILE_COUNT") {
       message = "Too many files. Maximum 3 files allowed per request.";
     } else if (err.code === "LIMIT_UNEXPECTED_FILE") {

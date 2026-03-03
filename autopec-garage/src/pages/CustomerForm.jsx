@@ -1,5 +1,5 @@
 /* eslint-disable no-unused-vars */
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   FaCar,
   FaUser,
@@ -50,8 +50,10 @@ const CustomerForm = () => {
   const recordingIntervalRef = useRef(null);
 
   // Constants for limits - ADJUSTED FOR FREE TIER
-  const MAX_FILES = 3; // Reduced to 3 for free tier
-  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB per file
+  const MAX_FILES = 3;
+  const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+  const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB
+  const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB
   const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB total
 
   const handleChange = (e) => {
@@ -62,10 +64,22 @@ const CustomerForm = () => {
   };
 
   // Calculate total file size whenever multimedia changes
-  React.useEffect(() => {
+  useEffect(() => {
     const size = formData.multimedia.reduce((acc, file) => acc + file.size, 0);
     setTotalSize(size);
   }, [formData.multimedia]);
+
+  // Cleanup function for media streams
+  const cleanupMediaStream = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (recordingIntervalRef.current) {
+      clearInterval(recordingIntervalRef.current);
+      recordingIntervalRef.current = null;
+    }
+  };
 
   // Open camera for photo/video capture
   const startCapture = async (type) => {
@@ -87,11 +101,20 @@ const CustomerForm = () => {
         await videoRef.current.play();
       }
 
-      if (type === "audio") {
-        mediaRecorderRef.current = new MediaRecorder(stream);
-        setupMediaRecorder();
-      } else if (type === "video") {
-        mediaRecorderRef.current = new MediaRecorder(stream);
+      if (type === "audio" || type === "video") {
+        // For audio/video recording
+        const options =
+          type === "audio"
+            ? { mimeType: "audio/webm" }
+            : { mimeType: "video/webm" };
+
+        try {
+          mediaRecorderRef.current = new MediaRecorder(stream, options);
+        } catch (e) {
+          // Fallback to default
+          mediaRecorderRef.current = new MediaRecorder(stream);
+        }
+
         setupMediaRecorder();
       }
     } catch (error) {
@@ -112,11 +135,15 @@ const CustomerForm = () => {
 
     mediaRecorderRef.current.onstop = () => {
       const blob = new Blob(chunks, {
-        type: captureType === "video" ? "video/mp4" : "audio/webm",
+        type: captureType === "video" ? "video/webm" : "audio/webm",
       });
 
       // Check file size before adding
       const newTotalSize = totalSize + blob.size;
+
+      // Check based on type
+      const maxSize = captureType === "video" ? MAX_VIDEO_SIZE : MAX_AUDIO_SIZE;
+
       if (newTotalSize > MAX_TOTAL_SIZE) {
         setError(
           `Recording would exceed total 10MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(2)}MB, Added: ${(blob.size / (1024 * 1024)).toFixed(2)}MB`,
@@ -125,9 +152,9 @@ const CustomerForm = () => {
         return;
       }
 
-      if (blob.size > MAX_FILE_SIZE) {
+      if (blob.size > maxSize) {
         setError(
-          `Recording exceeds 10MB limit (${(blob.size / (1024 * 1024)).toFixed(2)}MB)`,
+          `Recording exceeds ${maxSize / (1024 * 1024)}MB limit (${(blob.size / (1024 * 1024)).toFixed(2)}MB)`,
         );
         stopCapture();
         return;
@@ -142,9 +169,9 @@ const CustomerForm = () => {
 
       const file = new File(
         [blob],
-        `${captureType}_${Date.now()}.${captureType === "video" ? "mp4" : "webm"}`,
+        `${captureType}_${Date.now()}.${captureType === "video" ? "webm" : "webm"}`,
         {
-          type: captureType === "video" ? "video/mp4" : "audio/webm",
+          type: captureType === "video" ? "video/webm" : "audio/webm",
         },
       );
 
@@ -159,7 +186,7 @@ const CustomerForm = () => {
 
   const startRecording = () => {
     if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.start();
+      mediaRecorderRef.current.start(1000); // Collect data every second
       setIsRecording(true);
 
       // Start timer
@@ -199,9 +226,9 @@ const CustomerForm = () => {
             return;
           }
 
-          if (blob.size > MAX_FILE_SIZE) {
+          if (blob.size > MAX_IMAGE_SIZE) {
             setError(
-              `Photo exceeds 10MB limit (${(blob.size / (1024 * 1024)).toFixed(2)}MB)`,
+              `Photo exceeds 5MB limit (${(blob.size / (1024 * 1024)).toFixed(2)}MB)`,
             );
             stopCapture();
             return;
@@ -224,18 +251,13 @@ const CustomerForm = () => {
           stopCapture();
         },
         "image/jpeg",
-        0.8, // Reduced quality to save space
+        0.7, // Reduced quality to save space
       );
     }
   };
 
   const stopCapture = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-    }
-    if (recordingIntervalRef.current) {
-      clearInterval(recordingIntervalRef.current);
-    }
+    cleanupMediaStream();
     setShowCaptureModal(false);
     setCaptureType(null);
     setIsRecording(false);
@@ -805,7 +827,8 @@ const CustomerForm = () => {
                       color: "#666",
                     }}
                   >
-                    (Max {MAX_FILES} files, 10MB total)
+                    (Max {MAX_FILES} files, 10MB total - Images/Audio: 5MB max,
+                    Videos: 10MB max)
                   </span>
                 </label>
 
@@ -1040,8 +1063,7 @@ const CustomerForm = () => {
                       : "Or drag & drop files here"}
                   </p>
                   <p style={{ color: "#666", fontSize: "0.85rem" }}>
-                    Supports: Images, Videos, Audio (Max 10MB total, {MAX_FILES}{" "}
-                    files max)
+                    Supports: Images (5MB), Videos (10MB), Audio (5MB)
                   </p>
                 </div>
 

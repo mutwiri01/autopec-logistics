@@ -17,9 +17,9 @@ const api = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
-  timeout: 60000, // 60 second timeout for file uploads (increased from 30)
-  maxContentLength: 50 * 1024 * 1024, // 50MB max content length
-  maxBodyLength: 50 * 1024 * 1024, // 50MB max body length
+  timeout: 30000, // 30 second timeout for file uploads
+  maxContentLength: 20 * 1024 * 1024, // 20MB max content length
+  maxBodyLength: 20 * 1024 * 1024, // 20MB max body length
 });
 
 // Add request interceptor for logging
@@ -94,36 +94,49 @@ export const submitRepairRequest = async (formData) => {
     if (formData.multimedia && formData.multimedia.length > 0) {
       console.log(`📎 Adding ${formData.multimedia.length} files...`);
 
-      // Check file sizes (10MB limit for Cloudinary free tier total)
-      const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB per file
+      // Free tier limits
+      const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB for images
+      const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB for videos
+      const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB for audio
       const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB total
+      const MAX_FILES = 3; // Max 3 files
+
+      // Check number of files
+      if (formData.multimedia.length > MAX_FILES) {
+        throw new Error(`Maximum ${MAX_FILES} files allowed per submission`);
+      }
 
       let totalSize = 0;
-      const oversizedFiles = [];
+      const errors = [];
 
       formData.multimedia.forEach((file) => {
         totalSize += file.size;
-        if (file.size > MAX_FILE_SIZE) {
-          oversizedFiles.push(file.name);
+
+        // Check file size based on type
+        if (file.type.startsWith("image/") && file.size > MAX_IMAGE_SIZE) {
+          errors.push(`${file.name} exceeds 5MB limit for images`);
+        } else if (
+          file.type.startsWith("video/") &&
+          file.size > MAX_VIDEO_SIZE
+        ) {
+          errors.push(`${file.name} exceeds 10MB limit for videos`);
+        } else if (
+          file.type.startsWith("audio/") &&
+          file.size > MAX_AUDIO_SIZE
+        ) {
+          errors.push(`${file.name} exceeds 5MB limit for audio`);
         }
       });
 
-      if (oversizedFiles.length > 0) {
-        const fileNames = oversizedFiles.join(", ");
-        throw new Error(`Files exceed 10MB limit: ${fileNames}`);
-      }
-
+      // Check total size
       if (totalSize > MAX_TOTAL_SIZE) {
-        throw new Error(
-          `Total file size exceeds 10MB limit. Current total: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`,
+        errors.push(
+          `Total file size exceeds 10MB limit (${(totalSize / (1024 * 1024)).toFixed(2)}MB)`,
         );
       }
 
-      // Limit number of files to 3 for free tier reliability
-      if (formData.multimedia.length > 3) {
-        throw new Error(
-          "Maximum 3 files allowed per submission (free tier limit)",
-        );
+      if (errors.length > 0) {
+        throw new Error(errors.join(". "));
       }
 
       formData.multimedia.forEach((file) => {
@@ -138,9 +151,7 @@ export const submitRepairRequest = async (formData) => {
 
     /**
      * ERROR FIX 2: Correcting the Method Call
-     * Previously, this was using 'axios.post' and manually adding API_BASE_URL.
-     * We now use 'api.post' which correctly utilizes the baseURL
-     * defined in the instance above.
+     * Using the correct API endpoint path
      */
     const response = await api.post("/api/repairs/submit", data, {
       headers: {
@@ -180,8 +191,7 @@ export const getAllRepairs = async () => {
     console.log("📋 Fetching all repairs...");
     /**
      * ERROR FIX 3: Preventing path duplication
-     * By calling api.get("/api/repairs") against a cleaned baseURL,
-     * we ensure the request goes to /api/repairs instead of /api/api/repairs.
+     * Using the correct API endpoint path
      */
     const response = await api.get("/api/repairs");
     console.log(`✅ Found ${response.data.length} repairs`);
@@ -234,16 +244,31 @@ export const trackRepair = async (registrationNumber) => {
 // Helper function to check if a file is valid for upload
 export const isValidMediaFile = (file) => {
   const validTypes = ["image/", "video/", "audio/"];
-  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB for free tier
+  const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB for images
+  const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB for videos
+  const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB for audio
 
   const isValidType = validTypes.some((type) => file.type.startsWith(type));
-  const isValidSize = file.size <= MAX_FILE_SIZE;
+
+  let isValidSize = true;
+  let sizeLimit = "10MB";
+
+  if (file.type.startsWith("image/")) {
+    isValidSize = file.size <= MAX_IMAGE_SIZE;
+    sizeLimit = "5MB";
+  } else if (file.type.startsWith("video/")) {
+    isValidSize = file.size <= MAX_VIDEO_SIZE;
+    sizeLimit = "10MB";
+  } else if (file.type.startsWith("audio/")) {
+    isValidSize = file.size <= MAX_AUDIO_SIZE;
+    sizeLimit = "5MB";
+  }
 
   let error = null;
   if (!isValidType) {
     error = "Invalid file type. Please upload images, videos, or audio files.";
   } else if (!isValidSize) {
-    error = `File too large (max 10MB). Current size: ${(file.size / (1024 * 1024)).toFixed(2)}MB`;
+    error = `File too large (max ${sizeLimit}). Current size: ${(file.size / (1024 * 1024)).toFixed(2)}MB`;
   }
 
   return {

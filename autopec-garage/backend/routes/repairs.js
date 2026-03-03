@@ -8,6 +8,9 @@ const {
   validateUpload,
   MAX_FILES_PER_REQUEST,
   MAX_TOTAL_SIZE,
+  MAX_IMAGE_SIZE,
+  MAX_VIDEO_SIZE,
+  MAX_AUDIO_SIZE,
 } = require("../config/cloudinary");
 
 // Submit new repair request with multimedia
@@ -23,7 +26,7 @@ router.post("/submit", (req, res, next) => {
       if (err.code === "LIMIT_FILE_SIZE") {
         return res.status(400).json({
           error: "File too large",
-          details: "Maximum file size: 10MB for images, 100MB for videos",
+          details: "Maximum file size: 5MB for images/audio, 10MB for videos",
         });
       }
 
@@ -65,6 +68,46 @@ router.post("/submit", (req, res, next) => {
           });
         });
         return;
+      }
+
+      // Validate individual file sizes
+      for (const file of req.files) {
+        if (file.mimetype.startsWith("image/") && file.size > MAX_IMAGE_SIZE) {
+          // Clean up uploaded files
+          Promise.all(
+            req.files.map((f) => deleteMedia(f.filename).catch(() => {})),
+          ).then(() => {
+            return res.status(400).json({
+              error: "Image file too large",
+              details: `Image must be less than ${MAX_IMAGE_SIZE / (1024 * 1024)}MB`,
+            });
+          });
+          return;
+        }
+        if (file.mimetype.startsWith("video/") && file.size > MAX_VIDEO_SIZE) {
+          // Clean up uploaded files
+          Promise.all(
+            req.files.map((f) => deleteMedia(f.filename).catch(() => {})),
+          ).then(() => {
+            return res.status(400).json({
+              error: "Video file too large",
+              details: `Video must be less than ${MAX_VIDEO_SIZE / (1024 * 1024)}MB`,
+            });
+          });
+          return;
+        }
+        if (file.mimetype.startsWith("audio/") && file.size > MAX_AUDIO_SIZE) {
+          // Clean up uploaded files
+          Promise.all(
+            req.files.map((f) => deleteMedia(f.filename).catch(() => {})),
+          ).then(() => {
+            return res.status(400).json({
+              error: "Audio file too large",
+              details: `Audio must be less than ${MAX_AUDIO_SIZE / (1024 * 1024)}MB`,
+            });
+          });
+          return;
+        }
       }
     }
 
