@@ -14,11 +14,42 @@ export const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB
 export const MAX_TOTAL_SIZE = 15 * 1024 * 1024; // 15MB combined
 export const MAX_FILES = 3;
 
-// ─── Axios instance ───────────────────────────────────────────────────────────
+// ─── Helper: always extract a plain string from any error ────────────────────
+// Prevents React from crashing when an error object is accidentally passed to
+// setError() / setState(). Handles nested Cloudinary error shapes too.
+const extractErrorMessage = (error) => {
+  // Cloudinary returns { error: { message: "..." } }
+  if (error?.response?.data?.error?.message) {
+    return String(error.response.data.error.message);
+  }
+  // Our backend returns { details: "..." } or { error: "..." }
+  if (
+    error?.response?.data?.details &&
+    typeof error.response.data.details === "string"
+  ) {
+    return error.response.data.details;
+  }
+  if (
+    error?.response?.data?.error &&
+    typeof error.response.data.error === "string"
+  ) {
+    return error.response.data.error;
+  }
+  // Axios error message
+  if (typeof error?.message === "string") return error.message;
+  // Last resort — stringify whatever we have
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "An unknown error occurred.";
+  }
+};
+
+// ─── Axios instance (for calls to OUR backend only) ──────────────────────────
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: { "Content-Type": "application/json" },
-  timeout: 30000, // 30s is plenty — only JSON travels through Vercel now
+  timeout: 30000,
 });
 
 api.interceptors.request.use(
@@ -38,31 +69,30 @@ api.interceptors.response.use(
     if (error.code === "ECONNABORTED") {
       return Promise.reject(new Error("Request timed out. Please try again."));
     }
-    if (error.response) {
-      console.error(
-        "Response error:",
-        error.response.status,
-        error.response.data,
-      );
-      error.message =
-        error.response.data?.details ||
-        error.response.data?.error ||
-        error.message;
-    } else if (error.request) {
-      console.error("No response received");
-      error.message = "No response from server. Please check your connection.";
+    if (!error.request) {
+      // Request was never sent
+      return Promise.reject(error);
     }
+    if (!error.response) {
+      error.message = "No response from server. Please check your connection.";
+      return Promise.reject(error);
+    }
+    console.error(
+      "Response error:",
+      error.response.status,
+      error.response.data,
+    );
+    // Always ensure .message is a plain string
+    error.message = extractErrorMessage(error);
     return Promise.reject(error);
   },
 );
 
 // ─── uploadFileToCloudinary ───────────────────────────────────────────────────
-// 1. Fetch a signed upload token from YOUR backend (fast, no file involved)
-// 2. POST the file directly from the browser to Cloudinary's upload API
-//    (bypasses Vercel entirely — no timeouts)
-// Returns a { type, url, publicId, filename } object.
+// Gets a signature from our backend, then uploads the file directly from the
+// browser to Cloudinary — zero bytes go through Vercel.
 const uploadFileToCloudinary = async (file, onProgress) => {
-  // Determine folder and resource_type
+  // Determine Cloudinary folder and resource_type from the file's mime type
   let folder = "repairs";
   let resource_type = "auto";
 
@@ -74,14 +104,33 @@ const uploadFileToCloudinary = async (file, onProgress) => {
     resource_type = "video";
   } else if (file.type.startsWith("audio/")) {
     folder = "repairs/audio";
-    resource_type = "video"; // Cloudinary stores audio under "video"
+    resource_type = "video"; // Cloudinary stores audio under the "video" type
   }
 
-  // Step 1: get signature from our backend
-  const signRes = await api.post("/api/sign-upload", { folder, resource_type });
-  const { signature, timestamp, api_key, cloud_name } = signRes.data;
+  // Step 1: fetch upload signature from our backend
+  let signData;
+  try {
+    const signRes = await api.post("/api/sign-upload", {
+      folder,
+      resource_type,
+    });
+    signData = signRes.data;
+  } catch (err) {
+    throw new Error(`Could not get upload token: ${extractErrorMessage(err)}`);
+  }
 
-  // Step 2: build the multipart form for Cloudinary's upload API
+  const { signature, timestamp, api_key, cloud_name } = signData;
+
+  // Guard: if env vars are missing on the server, cloud_name will be undefined
+  if (!cloud_name || cloud_name === "undefined") {
+    throw new Error(
+      "Cloudinary is not configured on the server. " +
+        "Please add CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and " +
+        "CLOUDINARY_API_SECRET to your Vercel environment variables.",
+    );
+  }
+
+  // Step 2: build the FormData for Cloudinary's upload endpoint
   const formData = new FormData();
   formData.append("file", file);
   formData.append("api_key", api_key);
@@ -89,31 +138,44 @@ const uploadFileToCloudinary = async (file, onProgress) => {
   formData.append("signature", signature);
   formData.append("folder", folder);
 
-  // Apply the same lightweight transformation the server signed for images
   if (resource_type === "image") {
     formData.append("transformation", "c_limit,w_1200,h_1200,q_auto:eco");
   }
 
-  // Step 3: upload directly to Cloudinary (browser → Cloudinary, no Vercel hop)
-  const uploadRes = await axios.post(
-    `https://api.cloudinary.com/v1_1/${cloud_name}/${resource_type}/upload`,
-    formData,
-    {
-      headers: { "Content-Type": "multipart/form-data" },
-      timeout: 120000, // 2 min — Cloudinary can be slow on free tier
-      onUploadProgress: (e) => {
-        if (onProgress && e.total) {
-          onProgress(Math.round((e.loaded * 100) / e.total));
-        }
+  // Step 3: upload directly — browser → Cloudinary, Vercel not involved
+  let uploadRes;
+  try {
+    uploadRes = await axios.post(
+      `https://api.cloudinary.com/v1_1/${cloud_name}/${resource_type}/upload`,
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 120000, // 2 min for large files on Cloudinary free tier
+        onUploadProgress: (e) => {
+          if (onProgress && e.total) {
+            onProgress(Math.round((e.loaded * 100) / e.total));
+          }
+        },
       },
-    },
-  );
+    );
+  } catch (err) {
+    // Cloudinary 401 = bad signature or wrong api_key / cloud_name
+    if (err?.response?.status === 401) {
+      throw new Error(
+        "Cloudinary authentication failed (401). " +
+          "Check that CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET are set " +
+          "correctly in your Vercel environment variables.",
+      );
+    }
+    // Any other Cloudinary error — always produce a plain string
+    throw new Error(`File upload failed: ${extractErrorMessage(err)}`);
+  }
 
-  const mediaTypeMap = { image: "image", video: "video" };
   const isAudio = file.type.startsWith("audio/");
+  const typeMap = { image: "image", video: "video" };
 
   return {
-    type: isAudio ? "audio" : mediaTypeMap[resource_type] || "other",
+    type: isAudio ? "audio" : typeMap[resource_type] || "other",
     url: uploadRes.data.secure_url,
     publicId: uploadRes.data.public_id,
     filename: file.name,
@@ -121,15 +183,13 @@ const uploadFileToCloudinary = async (file, onProgress) => {
 };
 
 // ─── submitRepairRequest ──────────────────────────────────────────────────────
-// Uploads each file directly to Cloudinary, then sends a single JSON request
-// to the backend with the resulting URLs. Nothing heavy passes through Vercel.
 export const submitRepairRequest = async (formData, onProgress) => {
   try {
     console.log("📝 Starting submission...");
 
-    // ── Validate files before doing anything ─────────────────────────────────
     const files = formData.multimedia || [];
 
+    // Validate file count and sizes before doing anything
     if (files.length > MAX_FILES) {
       throw new Error(`Maximum ${MAX_FILES} files allowed per submission.`);
     }
@@ -149,24 +209,21 @@ export const submitRepairRequest = async (formData, onProgress) => {
 
     if (totalSize > MAX_TOTAL_SIZE) {
       sizeErrors.push(
-        `Combined size is ${(totalSize / (1024 * 1024)).toFixed(2)}MB — max ${MAX_TOTAL_SIZE / (1024 * 1024)}MB.`,
+        `Combined size ${(totalSize / (1024 * 1024)).toFixed(2)}MB exceeds the ${MAX_TOTAL_SIZE / (1024 * 1024)}MB limit.`,
       );
     }
 
-    if (sizeErrors.length > 0) {
-      throw new Error(sizeErrors.join(" "));
-    }
+    if (sizeErrors.length > 0) throw new Error(sizeErrors.join(" "));
 
-    // ── Upload each file directly to Cloudinary ───────────────────────────────
+    // Upload each file directly to Cloudinary
     const multimedia = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      console.log(`📤 Uploading file ${i + 1}/${files.length}: ${file.name}`);
+      console.log(`📤 Uploading ${i + 1}/${files.length}: ${file.name}`);
 
       const result = await uploadFileToCloudinary(file, (pct) => {
         if (onProgress) {
-          // Spread progress across files: each file gets an equal share
           const base = (i / files.length) * 100;
           const share = (1 / files.length) * pct;
           onProgress(Math.round(base + share));
@@ -177,7 +234,7 @@ export const submitRepairRequest = async (formData, onProgress) => {
       multimedia.push(result);
     }
 
-    // ── POST JSON to our backend ──────────────────────────────────────────────
+    // Send only JSON to our backend — small and fast
     const payload = {
       registrationNumber: formData.registrationNumber,
       problemDescription: formData.problemDescription,
@@ -187,21 +244,16 @@ export const submitRepairRequest = async (formData, onProgress) => {
       multimedia,
     };
 
-    console.log("📡 Sending JSON to backend...");
+    console.log("📡 Sending to backend...");
     const response = await api.post("/api/repairs/submit", payload);
-    console.log("✅ Submission successful:", response.data);
+    console.log("✅ Submission successful");
     return response.data;
   } catch (error) {
-    console.error("❌ submitRepairRequest error:", error);
-
-    if (error.response?.data?.details)
-      error.message = error.response.data.details;
-    else if (error.response?.data?.error)
-      error.message = error.response.data.error;
-    else if (error.message === "Network Error")
-      error.message = "Network error. Please check your internet connection.";
-
-    throw error;
+    // Always re-throw with a plain string message so React can render it safely
+    const msg = extractErrorMessage(error);
+    console.error("❌ submitRepairRequest error:", msg);
+    const clean = new Error(msg);
+    throw clean;
   }
 };
 
@@ -212,8 +264,7 @@ export const getAllRepairs = async () => {
     console.log(`✅ Found ${response.data.length} repairs`);
     return response.data;
   } catch (error) {
-    console.error("❌ getAllRepairs error:", error);
-    throw error;
+    throw new Error(extractErrorMessage(error));
   }
 };
 
@@ -221,11 +272,9 @@ export const getAllRepairs = async () => {
 export const deleteRepair = async (id) => {
   try {
     const response = await api.delete(`/api/repairs/${id}`);
-    console.log("✅ Delete successful");
     return response.data;
   } catch (error) {
-    console.error("❌ deleteRepair error:", error);
-    throw error;
+    throw new Error(extractErrorMessage(error));
   }
 };
 
@@ -233,11 +282,9 @@ export const deleteRepair = async (id) => {
 export const updateRepairStatus = async (id, data) => {
   try {
     const response = await api.put(`/api/repairs/${id}/status`, data);
-    console.log("✅ Update successful");
     return response.data;
   } catch (error) {
-    console.error("❌ updateRepairStatus error:", error);
-    throw error;
+    throw new Error(extractErrorMessage(error));
   }
 };
 
@@ -247,11 +294,9 @@ export const trackRepair = async (registrationNumber) => {
     const response = await api.get(
       `/api/repairs/track/${encodeURIComponent(registrationNumber)}`,
     );
-    console.log("✅ Tracking successful");
     return response.data;
   } catch (error) {
-    console.error("❌ trackRepair error:", error);
-    throw error;
+    throw new Error(extractErrorMessage(error));
   }
 };
 
