@@ -14,19 +14,48 @@ const allowedOrigins = [
   "https://autopec-logistics-btwc.vercel.app",
 ];
 
+// Middleware that manually sets CORS headers on EVERY response.
+// This runs before the cors() package so that even error responses
+// (including 4xx from multer) always carry the right headers —
+// without them the browser masks the real error as a CORS failure.
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (
+    origin &&
+    (allowedOrigins.includes(origin) || process.env.NODE_ENV !== "production")
+  ) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS",
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-Requested-With",
+  );
+
+  // Respond immediately to preflight OPTIONS requests — do NOT forward to routes
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
+// cors() package is kept as a second layer for any edge cases
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, curl, Vercel health checks)
       if (!origin) return callback(null, true);
-
       if (
         allowedOrigins.includes(origin) ||
         process.env.NODE_ENV !== "production"
       ) {
         return callback(null, true);
       }
-
       console.warn("CORS blocked origin:", origin);
       return callback(new Error("Not allowed by CORS"));
     },
