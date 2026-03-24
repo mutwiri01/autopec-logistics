@@ -15,9 +15,9 @@ const allowedOrigins = [
   "https://autopec-logistics-btwc.vercel.app",
 ];
 
-// ─── CORS: raw middleware runs FIRST, before everything else ─────────────────
-// Guarantees Access-Control-Allow-Origin is on EVERY response including
-// uncaught 500s — without this they appear as CORS errors in the browser.
+// ─── CORS: raw middleware — runs before everything else ───────────────────────
+// Sets Access-Control headers on EVERY response, including crashes and 500s,
+// so the browser always sees the real error instead of a fake CORS failure.
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (
@@ -37,7 +37,7 @@ app.use((req, res, next) => {
     "Content-Type, Authorization, X-Requested-With",
   );
 
-  // Short-circuit all OPTIONS preflights — never forward to routes
+  // Terminate OPTIONS preflights here — do not forward to any route
   if (req.method === "OPTIONS") {
     return res.sendStatus(204);
   }
@@ -56,7 +56,6 @@ app.use(
       ) {
         return callback(null, true);
       }
-      console.warn("CORS blocked origin:", origin);
       return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
@@ -66,10 +65,68 @@ app.use(
 );
 
 // ─── Body parsing ─────────────────────────────────────────────────────────────
-// File uploads no longer pass through this server (direct-to-Cloudinary).
-// Only small JSON payloads arrive here now.
+// Files go directly browser→Cloudinary now, so only small JSON arrives here.
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+
+// ─── MongoDB: lazy connection ─────────────────────────────────────────────────
+// On Vercel serverless, connecting at module load time causes cold-start
+// failures if MongoDB is slow to respond. Instead we connect on the first
+// request and reuse the cached connection for all subsequent requests
+// (Mongoose caches the connection internally).
+//
+// IMPORTANT: process.exit() is intentionally absent — calling it inside a
+// serverless function crashes the invocation permanently and prevents Vercel
+// from returning any error response to the client.
+let dbConnected = false;
+
+const connectDB = async () => {
+  if (dbConnected || mongoose.connection.readyState === 1) return;
+
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, {
+      // useNewUrlParser and useUnifiedTopology are removed — they are
+      // deprecated no-ops in Mongoose 7+ and cause warnings in Mongoose 6+.
+      serverSelectionTimeoutMS: 8000, // Fail fast so Vercel doesn't timeout
+      socketTimeoutMS: 30000,
+      maxPoolSize: 5, // Small pool suits serverless well
+    });
+    dbConnected = true;
+    console.log("✅ MongoDB connected");
+  } catch (err) {
+    // Log but do NOT call process.exit() — let the request handler return a
+    // proper 503 to the client instead of crashing the function.
+    console.error("❌ MongoDB connection failed:", err.message);
+    throw err;
+  }
+};
+
+// Middleware that ensures DB is connected before any route runs
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error("DB middleware error:", err.message);
+    return res.status(503).json({
+      error: "Database unavailable",
+      details: "Could not connect to the database. Please try again shortly.",
+    });
+  }
+});
+
+mongoose.connection.on("error", (err) => {
+  console.error("MongoDB error:", err);
+  dbConnected = false;
+});
+mongoose.connection.on("disconnected", () => {
+  console.log("MongoDB disconnected");
+  dbConnected = false;
+});
+mongoose.connection.on("reconnected", () => {
+  console.log("MongoDB reconnected");
+  dbConnected = true;
+});
 
 // ─── Cloudinary configuration ─────────────────────────────────────────────────
 cloudinaryPkg.config({
@@ -79,9 +136,9 @@ cloudinaryPkg.config({
 });
 
 // ─── POST /api/sign-upload ────────────────────────────────────────────────────
-// Returns a short-lived Cloudinary upload signature.
-// The frontend uploads files DIRECTLY to Cloudinary using this signature —
-// zero file bytes travel through Vercel, eliminating the 10s timeout problem.
+// Returns a short-lived signed upload token.
+// The browser uses this to upload files DIRECTLY to Cloudinary —
+// no file bytes travel through Vercel, eliminating timeout issues.
 app.post("/api/sign-upload", (req, res) => {
   try {
     const { folder = "repairs", resource_type = "image" } = req.body;
@@ -96,13 +153,8 @@ app.post("/api/sign-upload", (req, res) => {
 
     const timestamp = Math.round(Date.now() / 1000);
 
-    // These params must be sent by the frontend when calling Cloudinary directly.
-    const paramsToSign = {
-      timestamp,
-      folder: safeFolder,
-    };
+    const paramsToSign = { timestamp, folder: safeFolder };
 
-    // Add a lightweight transformation for images to conserve free-tier credits
     if (resource_type === "image") {
       paramsToSign.transformation = "c_limit,w_1200,h_1200,q_auto:eco";
     }
@@ -127,7 +179,7 @@ app.post("/api/sign-upload", (req, res) => {
   }
 });
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
+// ─── Application routes ───────────────────────────────────────────────────────
 app.get("/", (_req, res) => res.send("Autopec is running."));
 
 app.use("/api/repairs", repairRoutes);
@@ -136,6 +188,7 @@ app.get("/health", (_req, res) =>
   res.status(200).json({
     status: "OK",
     message: "Server is running",
+    db: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
     timestamp: new Date().toISOString(),
   }),
 );
@@ -146,7 +199,7 @@ app.get("/api", (_req, res) =>
     version: "2.0.0",
     endpoints: {
       "GET  /api/repairs": "Get all repairs",
-      "POST /api/repairs/submit": "Submit repair (JSON, no files)",
+      "POST /api/repairs/submit": "Submit repair (JSON only)",
       "PUT  /api/repairs/:id/status": "Update repair status",
       "GET  /api/repairs/track/:reg": "Track by registration number",
       "DEL  /api/repairs/:id": "Delete a repair",
@@ -158,30 +211,13 @@ app.get("/api", (_req, res) =>
 
 // ─── Global error handler ─────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
-  console.error("Global error handler:", err);
-
-  if (err.name === "MulterError") {
-    let message = err.message;
-    if (err.code === "LIMIT_FILE_SIZE")
-      message = "File too large. Max: 5MB images/audio, 10MB video.";
-    else if (err.code === "LIMIT_FILE_COUNT")
-      message = "Too many files. Maximum 3 files allowed.";
-    else if (err.code === "LIMIT_UNEXPECTED_FILE")
-      message = "Unexpected file field. Use 'multimedia' as the field name.";
-
-    return res.status(400).json({
-      error: "File upload error",
-      details: message,
-      code: err.code,
-    });
-  }
+  console.error("Unhandled error:", err);
 
   if (err.name === "ValidationError") {
     return res
       .status(400)
       .json({ error: "Validation error", details: err.message });
   }
-
   if (err.message === "Not allowed by CORS") {
     return res
       .status(403)
@@ -194,36 +230,13 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ─── MongoDB connection ───────────────────────────────────────────────────────
-const connectDB = async () => {
-  try {
-    await mongoose.connect(process.env.MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 10000,
-      socketTimeoutMS: 45000,
-    });
-    console.log("✅ Connected to MongoDB");
-  } catch (err) {
-    console.error("❌ MongoDB connection error:", err);
-    process.exit(1);
-  }
-};
-
-connectDB();
-
-mongoose.connection.on("error", (err) => console.error("MongoDB error:", err));
-mongoose.connection.on("disconnected", () =>
-  console.log("MongoDB disconnected"),
-);
-mongoose.connection.on("reconnected", () => console.log("MongoDB reconnected"));
-
-// ─── Local dev server ─────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 5000;
-if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
+// ─── Local dev only ───────────────────────────────────────────────────────────
+// On Vercel the module is imported as a serverless handler — app.listen()
+// must not be called there.
+if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+  const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📝 Environment: ${process.env.NODE_ENV || "development"}`);
+    console.log(`🚀 Server on port ${PORT}`);
   });
 }
 
