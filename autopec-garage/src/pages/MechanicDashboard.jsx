@@ -1,3 +1,4 @@
+/* eslint-disable no-dupe-keys */
 /* eslint-disable no-unused-vars */
 import React, { useState, useEffect, useMemo } from "react";
 import {
@@ -9,21 +10,31 @@ import {
   FaEdit,
   FaSave,
   FaTimes,
-  FaChevronDown,
-  FaChevronUp,
   FaSearch,
   FaSync,
-  FaFilter,
-  FaBars,
-  FaTimes as FaTimesIcon,
   FaImage,
   FaVideo,
-  FaMicrophone,
   FaDownload,
-  FaPlay,
-  FaPause,
   FaExpand,
   FaExclamationTriangle,
+  FaUser,
+  FaPhone,
+  FaCar,
+  FaCalendarAlt,
+  FaClock,
+  FaShare,
+  FaChevronDown,
+  FaChevronUp,
+  FaListUl,
+  FaLayerGroup,
+  FaIdCard,
+  FaClipboardList,
+  FaFilter,
+  FaBell,
+  FaTachometerAlt,
+  FaAngleRight,
+  FaEye,
+  FaArrowLeft,
 } from "react-icons/fa";
 import {
   getAllRepairs,
@@ -31,1459 +42,1850 @@ import {
   deleteRepair,
 } from "../services/api";
 import Header from "../components/Header";
+import Footer from "../components/Footer";
+import StatusBadge, { STATUS_CONFIG } from "../components/StatusBadge";
 
+/* ─── Helpers ─────────────────────────────────────────────────────────────── */
+const fmt = (d) =>
+  new Date(d).toLocaleDateString("en-KE", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
+const fmtFull = (d) =>
+  new Date(d).toLocaleString("en-KE", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+const STATUS_FLOW = ["submitted", "in_garage", "in_progress", "completed"];
+
+const labelStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  fontFamily: "'Barlow Condensed', sans-serif",
+  fontSize: "0.78rem",
+  fontWeight: 700,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  color: "#888",
+  marginBottom: "6px",
+};
+
+/* ─── Stat Card ─────────────────────────────────────────────────────────── */
+const StatCard = ({ label, value, color, icon }) => (
+  <div
+    style={{
+      background: "white",
+      borderRadius: "12px",
+      padding: "18px 16px",
+      border: "1px solid #e0e0e0",
+      borderTop: `3px solid ${color}`,
+      display: "flex",
+      flexDirection: "column",
+      gap: "4px",
+      transition: "box-shadow 0.2s",
+    }}
+  >
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+      }}
+    >
+      <span style={{ color: "#aaa", fontSize: "22px" }}>{icon}</span>
+      <span
+        style={{
+          fontFamily: "'Barlow Condensed', sans-serif",
+          fontSize: "2rem",
+          fontWeight: 800,
+          color,
+          lineHeight: 1,
+        }}
+      >
+        {value}
+      </span>
+    </div>
+    <span
+      style={{
+        fontFamily: "'Barlow Condensed', sans-serif",
+        fontSize: "0.78rem",
+        fontWeight: 700,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        color: "#888",
+      }}
+    >
+      {label}
+    </span>
+  </div>
+);
+
+/* ─── Fullscreen Media Modal ────────────────────────────────────────────── */
+const MediaModal = ({ media, onClose }) => {
+  if (!media) return null;
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.96)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 3000,
+        padding: "20px",
+      }}
+      onClick={onClose}
+    >
+      <button
+        style={{
+          position: "absolute",
+          top: "20px",
+          right: "20px",
+          background: "rgba(255,255,255,0.15)",
+          border: "none",
+          width: "44px",
+          height: "44px",
+          borderRadius: "50%",
+          color: "white",
+          fontSize: "18px",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        onClick={onClose}
+      >
+        <FaTimes />
+      </button>
+      {media.type === "image" ? (
+        <img
+          src={media.url}
+          alt=""
+          style={{
+            maxWidth: "100%",
+            maxHeight: "90vh",
+            objectFit: "contain",
+            borderRadius: "8px",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ) : media.type === "video" ? (
+        <video
+          src={media.url}
+          controls
+          autoPlay
+          style={{ maxWidth: "100%", maxHeight: "90vh", borderRadius: "8px" }}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ) : (
+        <div
+          style={{
+            background: "white",
+            padding: "30px",
+            borderRadius: "16px",
+            maxWidth: "500px",
+            width: "100%",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <h3
+            style={{
+              fontFamily: "'Barlow Condensed', sans-serif",
+              marginBottom: "16px",
+            }}
+          >
+            Audio
+          </h3>
+          <audio src={media.url} controls autoPlay style={{ width: "100%" }} />
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ─── Customer Profile View ─────────────────────────────────────────────── */
+const CustomerProfile = ({ repairs, onClose }) => {
+  if (!repairs || repairs.length === 0) return null;
+  const latest = repairs[0];
+  const shareUrl = `${window.location.origin}/?track=${encodeURIComponent(latest.registrationNumber)}`;
+
+  const handleShare = () => {
+    if (navigator.share) {
+      navigator.share({
+        title: `Repair Status — ${latest.registrationNumber}`,
+        text: `Track your car repair for ${latest.registrationNumber}`,
+        url: shareUrl,
+      });
+    } else {
+      navigator.clipboard?.writeText(shareUrl);
+      alert("Profile link copied to clipboard!");
+    }
+  };
+
+  const currentStep = STATUS_FLOW.indexOf(latest.status);
+  const stepColors = {
+    submitted: "#f39c12",
+    in_garage: "#0984e3",
+    in_progress: "#00b894",
+    completed: "#27ae60",
+  };
+  const stepIcons = {
+    submitted: <FaCarSide />,
+    in_garage: <FaTools />,
+    in_progress: <FaWrench />,
+    completed: <FaCheckCircle />,
+  };
+  const stepLabels = {
+    submitted: "Submitted",
+    in_garage: "In Garage",
+    in_progress: "In Progress",
+    completed: "Completed",
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.6)",
+        zIndex: 2000,
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+        backdropFilter: "blur(4px)",
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: "white",
+          borderRadius: "20px 20px 0 0",
+          width: "100%",
+          maxWidth: "700px",
+          maxHeight: "92vh",
+          overflowY: "auto",
+          padding: "0",
+          animation: "slideUp 0.35s ease",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Profile Header */}
+        <div
+          style={{
+            background: "linear-gradient(135deg,#1a1a2e,#16213e)",
+            padding: "24px 24px 20px",
+            borderRadius: "20px 20px 0 0",
+            position: "relative",
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: "3px",
+              background: "linear-gradient(90deg,#c0392b,#f39c12)",
+            }}
+          />
+          <button
+            onClick={onClose}
+            style={{
+              position: "absolute",
+              top: "16px",
+              right: "16px",
+              background: "rgba(255,255,255,0.1)",
+              border: "none",
+              width: "36px",
+              height: "36px",
+              borderRadius: "50%",
+              color: "white",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <FaTimes />
+          </button>
+
+          <div
+            style={{
+              display: "flex",
+              gap: "16px",
+              alignItems: "flex-start",
+              flexWrap: "wrap",
+            }}
+          >
+            <div
+              style={{
+                width: "54px",
+                height: "54px",
+                background: "rgba(192,57,43,0.2)",
+                borderRadius: "12px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#c0392b",
+                fontSize: "22px",
+                border: "1px solid rgba(192,57,43,0.3)",
+                flexShrink: 0,
+              }}
+            >
+              <FaIdCard />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div
+                style={{
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontSize: "1.8rem",
+                  fontWeight: 800,
+                  color: "white",
+                  letterSpacing: "0.06em",
+                  lineHeight: 1,
+                  marginBottom: "6px",
+                }}
+              >
+                {latest.registrationNumber}
+              </div>
+              <div
+                style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.9rem" }}
+              >
+                {latest.carModel || "Vehicle"} ·{" "}
+                {latest.customerName || "Customer"}
+              </div>
+              {latest.phoneNumber && (
+                <div
+                  style={{
+                    color: "rgba(255,255,255,0.5)",
+                    fontSize: "0.85rem",
+                    marginTop: "4px",
+                  }}
+                >
+                  {latest.phoneNumber}
+                </div>
+              )}
+            </div>
+            <StatusBadge status={latest.status} size="lg" />
+          </div>
+        </div>
+
+        <div style={{ padding: "24px" }}>
+          {/* Progress Bar */}
+          <div
+            style={{
+              background: "#f5f5f5",
+              borderRadius: "12px",
+              padding: "16px",
+              marginBottom: "20px",
+            }}
+          >
+            <div style={{ ...labelStyle, marginBottom: "12px" }}>
+              Current Progress
+            </div>
+            <div style={{ display: "flex", alignItems: "center" }}>
+              {STATUS_FLOW.map((step, idx) => {
+                const done = idx <= currentStep;
+                const active = idx === currentStep;
+                return (
+                  <React.Fragment key={step}>
+                    {idx > 0 && (
+                      <div
+                        style={{
+                          flex: 1,
+                          height: "3px",
+                          background:
+                            idx <= currentStep
+                              ? stepColors[STATUS_FLOW[currentStep]]
+                              : "#ddd",
+                          transition: "background 0.3s",
+                        }}
+                      />
+                    )}
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: "4px",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: "34px",
+                          height: "34px",
+                          borderRadius: "50%",
+                          background: done
+                            ? stepColors[STATUS_FLOW[currentStep]]
+                            : "#ddd",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: done ? "white" : "#aaa",
+                          fontSize: "13px",
+                          border: active
+                            ? `3px solid ${stepColors[step]}`
+                            : "3px solid transparent",
+                          boxSizing: "border-box",
+                          boxShadow: active
+                            ? `0 0 0 3px ${stepColors[step]}33`
+                            : "none",
+                          transition: "all 0.3s",
+                        }}
+                      >
+                        {stepIcons[step]}
+                      </div>
+                      <span
+                        style={{
+                          fontSize: "0.62rem",
+                          fontFamily: "'Barlow Condensed', sans-serif",
+                          fontWeight: active ? 700 : 500,
+                          color: active
+                            ? stepColors[step]
+                            : done
+                              ? "#555"
+                              : "#bbb",
+                          textTransform: "uppercase",
+                          whiteSpace: "nowrap",
+                          letterSpacing: "0.04em",
+                        }}
+                      >
+                        {stepLabels[step]}
+                      </span>
+                    </div>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Customer Info */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "12px",
+              marginBottom: "20px",
+            }}
+          >
+            {[
+              {
+                label: "Customer",
+                value: latest.customerName || "—",
+                icon: <FaUser />,
+              },
+              {
+                label: "Phone",
+                value: latest.phoneNumber || "—",
+                icon: <FaPhone />,
+              },
+              {
+                label: "Vehicle",
+                value: latest.carModel || "—",
+                icon: <FaCar />,
+              },
+              {
+                label: "First Visit",
+                value: fmt(latest.createdAt),
+                icon: <FaCalendarAlt />,
+              },
+              {
+                label: "Total Repairs",
+                value: repairs.length,
+                icon: <FaClipboardList />,
+              },
+              {
+                label: "Last Update",
+                value: fmt(latest.updatedAt || latest.createdAt),
+                icon: <FaClock />,
+              },
+            ].map(({ label, value, icon }) => (
+              <div
+                key={label}
+                style={{
+                  background: "#fafafa",
+                  borderRadius: "10px",
+                  padding: "14px",
+                  border: "1px solid #e0e0e0",
+                }}
+              >
+                <div style={labelStyle}>
+                  {icon} {label}
+                </div>
+                <div
+                  style={{
+                    fontSize: "0.95rem",
+                    fontWeight: 600,
+                    color: "#1a1a2e",
+                  }}
+                >
+                  {value}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Latest Mechanic Notes */}
+          {latest.mechanicNotes && (
+            <div
+              style={{
+                background: "#e8f8f5",
+                borderRadius: "10px",
+                padding: "16px",
+                borderLeft: "4px solid #00b894",
+                marginBottom: "20px",
+              }}
+            >
+              <div
+                style={{ ...labelStyle, color: "#00897b", marginBottom: "8px" }}
+              >
+                <FaWrench /> Mechanic Notes
+              </div>
+              <p
+                style={{
+                  color: "#424242",
+                  fontSize: "0.95rem",
+                  lineHeight: 1.6,
+                }}
+              >
+                {latest.mechanicNotes}
+              </p>
+            </div>
+          )}
+
+          {/* Repair History */}
+          <div style={{ marginBottom: "20px" }}>
+            <div style={{ ...labelStyle, marginBottom: "12px" }}>
+              <FaHistory /> Repair History ({repairs.length})
+            </div>
+            <div style={{ display: "grid", gap: "10px" }}>
+              {repairs.map((r, idx) => (
+                <div
+                  key={r._id}
+                  style={{
+                    background: "#fafafa",
+                    borderRadius: "10px",
+                    padding: "14px",
+                    border: "1px solid #e0e0e0",
+                    borderLeft: `3px solid ${STATUS_CONFIG[r.status]?.color || "#ccc"}`,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: "6px",
+                      flexWrap: "wrap",
+                      gap: "6px",
+                    }}
+                  >
+                    <span style={{ fontSize: "0.8rem", color: "#888" }}>
+                      {fmtFull(r.createdAt)}
+                    </span>
+                    <StatusBadge status={r.status} size="sm" />
+                  </div>
+                  <p
+                    style={{
+                      color: "#424242",
+                      fontSize: "0.9rem",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {r.problemDescription}
+                  </p>
+                  {r.multimedia?.length > 0 && (
+                    <p
+                      style={{
+                        color: "#888",
+                        fontSize: "0.78rem",
+                        marginTop: "6px",
+                      }}
+                    >
+                      📎 {r.multimedia.length} attachment(s)
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Share Button */}
+          <button
+            onClick={handleShare}
+            style={{
+              width: "100%",
+              padding: "14px",
+              background: "linear-gradient(135deg,#1a1a2e,#0f3460)",
+              color: "white",
+              border: "none",
+              borderRadius: "50px",
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontWeight: 700,
+              fontSize: "0.95rem",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+            }}
+          >
+            <FaShare /> Share Profile with Customer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ─── Repair Card ───────────────────────────────────────────────────────── */
+const RepairCard = ({
+  repair,
+  isExpanded,
+  onToggle,
+  onStatusUpdate,
+  onDelete,
+  onViewProfile,
+  customerRepairs,
+  actionLoading,
+  onOpenMedia,
+}) => {
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [notes, setNotes] = useState(repair.mechanicNotes || "");
+  const [saving, setSaving] = useState(false);
+
+  const saveNotes = async () => {
+    setSaving(true);
+    try {
+      await updateRepairStatus(repair._id, {
+        status: repair.status,
+        mechanicNotes: notes.trim(),
+      });
+      setEditingNotes(false);
+    } catch {
+      alert("Error saving notes.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const statusColor = STATUS_CONFIG[repair.status]?.color || "#888";
+
+  return (
+    <div
+      style={{
+        background: "white",
+        borderRadius: "12px",
+        border: "1px solid #e0e0e0",
+        borderLeft: `4px solid ${statusColor}`,
+        overflow: "hidden",
+        boxShadow: isExpanded ? "0 4px 20px rgba(0,0,0,0.1)" : "none",
+        transition: "box-shadow 0.2s",
+      }}
+    >
+      {/* Card Header */}
+      <div
+        style={{ padding: "16px", cursor: "pointer", userSelect: "none" }}
+        onClick={onToggle}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: "12px",
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                flexWrap: "wrap",
+                marginBottom: "6px",
+              }}
+            >
+              <span
+                style={{
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontSize: "1.2rem",
+                  fontWeight: 800,
+                  color: "#1a1a2e",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                {repair.registrationNumber}
+              </span>
+              <StatusBadge status={repair.status} />
+              {repair.multimedia?.length > 0 && (
+                <span
+                  style={{
+                    background: "#f0f6ff",
+                    color: "#0984e3",
+                    borderRadius: "12px",
+                    padding: "2px 8px",
+                    fontSize: "0.72rem",
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                    fontWeight: 700,
+                    letterSpacing: "0.04em",
+                    border: "1px solid #c3d9f0",
+                  }}
+                >
+                  📎 {repair.multimedia.length}
+                </span>
+              )}
+            </div>
+            <div
+              style={{
+                color: "#666",
+                fontSize: "0.88rem",
+                marginBottom: "4px",
+              }}
+            >
+              {repair.carModel || "Unknown model"} ·{" "}
+              {repair.customerName || "Anonymous"}
+            </div>
+            <div style={{ color: "#aaa", fontSize: "0.8rem" }}>
+              {fmt(repair.createdAt)}
+              {repair.phoneNumber && ` · ${repair.phoneNumber}`}
+            </div>
+          </div>
+          <div style={{ color: "#ccc", flexShrink: 0, marginTop: "4px" }}>
+            {isExpanded ? <FaChevronUp /> : <FaChevronDown />}
+          </div>
+        </div>
+
+        {/* Problem preview */}
+        {!isExpanded && (
+          <div
+            style={{
+              marginTop: "10px",
+              padding: "10px 12px",
+              background: "#fafafa",
+              borderRadius: "8px",
+              color: "#666",
+              fontSize: "0.88rem",
+              lineHeight: 1.5,
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}
+          >
+            {repair.problemDescription}
+          </div>
+        )}
+      </div>
+
+      {/* Expanded Content */}
+      {isExpanded && (
+        <div style={{ borderTop: "1px solid #f0f0f0" }}>
+          {/* Full problem description */}
+          <div style={{ padding: "16px", borderBottom: "1px solid #f0f0f0" }}>
+            <div style={labelStyle}>
+              <FaClipboardList /> Problem Description
+            </div>
+            <div
+              style={{
+                background: "#fafafa",
+                borderRadius: "8px",
+                padding: "12px",
+                color: "#424242",
+                fontSize: "0.95rem",
+                lineHeight: 1.6,
+                borderLeft: "3px solid #c0392b",
+              }}
+            >
+              {repair.problemDescription}
+            </div>
+          </div>
+
+          {/* Media */}
+          {repair.multimedia?.length > 0 && (
+            <div style={{ padding: "16px", borderBottom: "1px solid #f0f0f0" }}>
+              <div style={labelStyle}>
+                <FaImage /> Attachments
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill,minmax(90px,1fr))",
+                  gap: "8px",
+                }}
+              >
+                {repair.multimedia.map((m, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      aspectRatio: "1",
+                      borderRadius: "8px",
+                      overflow: "hidden",
+                      cursor: "pointer",
+                      background: "#f0f0f0",
+                      border: "1px solid #e0e0e0",
+                      position: "relative",
+                    }}
+                    onClick={() => onOpenMedia(m)}
+                  >
+                    {m.type === "image" ? (
+                      <img
+                        src={m.url}
+                        alt=""
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          background: "#e8f4fd",
+                          color: "#0984e3",
+                          gap: "4px",
+                        }}
+                      >
+                        <FaVideo size={18} />
+                        <span style={{ fontSize: "10px", color: "#666" }}>
+                          Video
+                        </span>
+                      </div>
+                    )}
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        background: "rgba(0,0,0,0)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        transition: "background 0.2s",
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.background = "rgba(0,0,0,0.3)")
+                      }
+                      onMouseLeave={(e) =>
+                        (e.currentTarget.style.background = "rgba(0,0,0,0)")
+                      }
+                    >
+                      <FaExpand
+                        style={{
+                          color: "white",
+                          opacity: 0,
+                          transition: "opacity 0.2s",
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Mechanic Notes */}
+          <div style={{ padding: "16px", borderBottom: "1px solid #f0f0f0" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "8px",
+              }}
+            >
+              <div style={labelStyle}>
+                <FaEdit /> Mechanic Notes
+              </div>
+              {!editingNotes && (
+                <button
+                  onClick={() => setEditingNotes(true)}
+                  style={{
+                    background: "none",
+                    border: "1px solid #e0e0e0",
+                    borderRadius: "20px",
+                    padding: "4px 12px",
+                    cursor: "pointer",
+                    fontSize: "0.78rem",
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                    fontWeight: 700,
+                    color: "#666",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  <FaEdit size={11} /> {repair.mechanicNotes ? "Edit" : "Add"}
+                </button>
+              )}
+            </div>
+            {editingNotes ? (
+              <div>
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Enter notes about the repair…"
+                  rows={3}
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    border: "2px solid #e0e0e0",
+                    borderRadius: "8px",
+                    fontFamily: "'Barlow', sans-serif",
+                    fontSize: "0.9rem",
+                    resize: "vertical",
+                    boxSizing: "border-box",
+                    marginBottom: "10px",
+                  }}
+                />
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "8px",
+                    justifyContent: "flex-end",
+                  }}
+                >
+                  <button
+                    onClick={saveNotes}
+                    disabled={saving}
+                    style={{
+                      background: "linear-gradient(135deg,#27ae60,#1e8449)",
+                      color: "white",
+                      border: "none",
+                      padding: "8px 16px",
+                      borderRadius: "20px",
+                      cursor: saving ? "not-allowed" : "pointer",
+                      fontFamily: "'Barlow Condensed', sans-serif",
+                      fontWeight: 700,
+                      fontSize: "0.82rem",
+                      letterSpacing: "0.04em",
+                      textTransform: "uppercase",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      opacity: saving ? 0.6 : 1,
+                    }}
+                  >
+                    <FaSave size={11} /> {saving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingNotes(false);
+                      setNotes(repair.mechanicNotes || "");
+                    }}
+                    disabled={saving}
+                    style={{
+                      background: "none",
+                      border: "1px solid #e0e0e0",
+                      padding: "8px 16px",
+                      borderRadius: "20px",
+                      cursor: "pointer",
+                      fontFamily: "'Barlow Condensed', sans-serif",
+                      fontWeight: 700,
+                      fontSize: "0.82rem",
+                      letterSpacing: "0.04em",
+                      textTransform: "uppercase",
+                      color: "#888",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  background: repair.mechanicNotes ? "#e8f8f5" : "#fafafa",
+                  borderRadius: "8px",
+                  padding: "12px",
+                  borderLeft: `3px solid ${repair.mechanicNotes ? "#00b894" : "#e0e0e0"}`,
+                  color: repair.mechanicNotes ? "#424242" : "#aaa",
+                  fontSize: "0.9rem",
+                  lineHeight: 1.6,
+                  fontStyle: repair.mechanicNotes ? "normal" : "italic",
+                  minHeight: "44px",
+                }}
+              >
+                {repair.mechanicNotes || "No notes added yet."}
+              </div>
+            )}
+          </div>
+
+          {/* Status Update */}
+          <div style={{ padding: "16px", borderBottom: "1px solid #f0f0f0" }}>
+            <div style={{ ...labelStyle, marginBottom: "12px" }}>
+              Update Status
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2,1fr)",
+                gap: "8px",
+              }}
+            >
+              {STATUS_FLOW.map((s) => {
+                const cfg = STATUS_CONFIG[s];
+                const active = repair.status === s;
+                return (
+                  <button
+                    key={s}
+                    onClick={() => !active && onStatusUpdate(repair._id, s)}
+                    disabled={active || actionLoading}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: "10px",
+                      border: `2px solid ${active ? cfg.color : "#e0e0e0"}`,
+                      background: active ? cfg.bg : "white",
+                      color: active ? cfg.color : "#666",
+                      cursor: active || actionLoading ? "default" : "pointer",
+                      fontFamily: "'Barlow Condensed', sans-serif",
+                      fontWeight: 700,
+                      fontSize: "0.82rem",
+                      letterSpacing: "0.05em",
+                      textTransform: "uppercase",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "6px",
+                      transition: "all 0.2s",
+                      opacity: actionLoading && !active ? 0.5 : 1,
+                    }}
+                  >
+                    {cfg?.icon || null}
+                    {STATUS_CONFIG[s]?.label || s}
+                    {active && " ✓"}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Footer Actions */}
+          <div
+            style={{
+              padding: "12px 16px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "8px",
+            }}
+          >
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                onClick={() => onViewProfile(repair.registrationNumber)}
+                style={{
+                  background: "#f0f6ff",
+                  color: "#0984e3",
+                  border: "1px solid #c3d9f0",
+                  padding: "7px 14px",
+                  borderRadius: "20px",
+                  cursor: "pointer",
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontWeight: 700,
+                  fontSize: "0.78rem",
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "5px",
+                }}
+              >
+                <FaIdCard size={11} /> View Profile
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <span style={{ color: "#ddd", fontSize: "0.75rem" }}>
+                #{repair._id.slice(-6)}
+              </span>
+              <button
+                onClick={() => onDelete(repair._id)}
+                disabled={actionLoading}
+                style={{
+                  background: "#fff5f5",
+                  color: "#c0392b",
+                  border: "1px solid #fbd6d6",
+                  padding: "7px 14px",
+                  borderRadius: "20px",
+                  cursor: actionLoading ? "not-allowed" : "pointer",
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontWeight: 700,
+                  fontSize: "0.78rem",
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "5px",
+                  opacity: actionLoading ? 0.5 : 1,
+                }}
+              >
+                <FaTrash size={11} /> Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ─── Main Dashboard ────────────────────────────────────────────────────── */
 const MechanicDashboard = () => {
   const [repairs, setRepairs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [expandedRepairId, setExpandedRepairId] = useState(null);
-  const [editingRepairId, setEditingRepairId] = useState(null);
-  const [mechanicNotes, setMechanicNotes] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [activeTab, setActiveTab] = useState("all");
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [refreshCount, setRefreshCount] = useState(0);
-  const [showFilters, setShowFilters] = useState(false);
-  const [selectedMedia, setSelectedMedia] = useState(null);
-  const [playingAudio, setPlayingAudio] = useState(null);
-  const [fullscreenMedia, setFullscreenMedia] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [fullscreenMedia, setFullscreenMedia] = useState(null);
+  const [profileReg, setProfileReg] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    let isMounted = true;
-    let intervalId;
-
-    const loadAndRefreshRepairs = async () => {
-      if (!isMounted) return;
-
-      try {
-        setError(null);
-        const data = await getAllRepairs();
-        if (isMounted) {
-          setRepairs(data || []);
-          setLastUpdated(new Date());
-          setLoading(false);
-        }
-      } catch (error) {
-        console.error("Error fetching repairs:", error);
-        if (isMounted) {
-          setError(error.message || "Failed to fetch repairs");
-          setLoading(false);
-        }
-      }
-    };
-
-    loadAndRefreshRepairs();
-
-    if (autoRefresh) {
-      intervalId = setInterval(() => {
-        loadAndRefreshRepairs();
-        setRefreshCount((prev) => prev + 1);
-      }, 30000); // Refresh every 30 seconds
-    }
-
-    return () => {
-      isMounted = false;
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, [autoRefresh]);
-
-  const filteredRepairs = useMemo(() => {
-    let results = repairs;
-
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      results = results.filter(
-        (repair) =>
-          repair.registrationNumber.toLowerCase().includes(term) ||
-          (repair.carModel && repair.carModel.toLowerCase().includes(term)) ||
-          (repair.customerName &&
-            repair.customerName.toLowerCase().includes(term)) ||
-          (repair.phoneNumber && repair.phoneNumber.includes(term)) ||
-          (repair.problemDescription &&
-            repair.problemDescription.toLowerCase().includes(term)) ||
-          (repair.mechanicNotes &&
-            repair.mechanicNotes.toLowerCase().includes(term)),
-      );
-    }
-
-    if (statusFilter !== "all") {
-      results = results.filter((repair) => repair.status === statusFilter);
-    }
-
-    return results;
-  }, [repairs, searchTerm, statusFilter]);
-
-  const toggleExpand = (repairId) => {
-    if (expandedRepairId === repairId) {
-      setExpandedRepairId(null);
-      setSelectedMedia(null);
-      setPlayingAudio(null);
-    } else {
-      setExpandedRepairId(repairId);
-    }
-    setEditingRepairId(null);
-    setMechanicNotes("");
-  };
-
-  const startEditNotes = (repair) => {
-    setEditingRepairId(repair._id);
-    setMechanicNotes(repair.mechanicNotes || "");
-    if (expandedRepairId !== repair._id) {
-      setExpandedRepairId(repair._id);
-    }
-  };
-
-  const cancelEdit = () => {
-    setEditingRepairId(null);
-    setMechanicNotes("");
-  };
-
-  const saveNotes = async (repairId) => {
-    setActionLoading(true);
-    try {
-      const repair = repairs.find((r) => r._id === repairId);
-      await updateRepairStatus(repairId, {
-        status: repair.status,
-        mechanicNotes: mechanicNotes.trim(),
-      });
-
-      const updatedRepairs = repairs.map((repair) =>
-        repair._id === repairId
-          ? { ...repair, mechanicNotes: mechanicNotes.trim() }
-          : repair,
-      );
-
-      setRepairs(updatedRepairs);
-      setEditingRepairId(null);
-      setMechanicNotes("");
-    } catch (error) {
-      console.error("Error saving notes:", error);
-      alert("Error saving notes. Please try again.");
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleStatusUpdate = async (repairId, newStatus) => {
-    setActionLoading(true);
-    try {
-      const repair = repairs.find((r) => r._id === repairId);
-      const notesToSave = repair.mechanicNotes || "";
-
-      await updateRepairStatus(repairId, {
-        status: newStatus,
-        mechanicNotes: notesToSave,
-      });
-
-      const updatedRepairs = repairs.map((repair) =>
-        repair._id === repairId ? { ...repair, status: newStatus } : repair,
-      );
-
-      setRepairs(updatedRepairs);
-    } catch (error) {
-      console.error("Error updating repair status:", error);
-      alert("Error updating status. Please try again.");
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleDeleteRepair = async (repairId) => {
-    if (
-      !window.confirm(
-        "Are you sure you want to delete this repair request? This action cannot be undone.",
-      )
-    ) {
-      return;
-    }
-
-    setActionLoading(true);
-    try {
-      await deleteRepair(repairId);
-      const updatedRepairs = repairs.filter(
-        (repair) => repair._id !== repairId,
-      );
-      setRepairs(updatedRepairs);
-    } catch (error) {
-      console.error("Error deleting repair:", error);
-      alert("Error deleting repair request. Please try again.");
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleManualRefresh = async () => {
-    setLoading(true);
+  const loadRepairs = async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setError(null);
     try {
       const data = await getAllRepairs();
       setRepairs(data || []);
       setLastUpdated(new Date());
-    } catch (error) {
-      console.error("Error fetching repairs:", error);
-      setError(error.message || "Failed to fetch repairs");
+    } catch (err) {
+      setError(err.message || "Failed to load repairs");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const clearFilters = () => {
-    setSearchTerm("");
-    setStatusFilter("all");
-    setShowFilters(false);
+  useEffect(() => {
+    loadRepairs();
+    let id;
+    if (autoRefresh) id = setInterval(() => loadRepairs(true), 30000);
+    return () => clearInterval(id);
+  }, [autoRefresh]);
+
+  const handleManualRefresh = () => {
+    setRefreshing(true);
+    loadRepairs(true);
   };
 
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case "submitted":
-        return <FaCarSide />;
-      case "in_garage":
-        return <FaTools />;
-      case "in_progress":
-        return <FaWrench />;
-      case "completed":
-        return <FaCheckCircle />;
-      default:
-        return <FaCarSide />;
+  // Group repairs by registration number for customer profiles
+  const customerGroups = useMemo(() => {
+    const groups = {};
+    repairs.forEach((r) => {
+      const key = r.registrationNumber;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(r);
+    });
+    // Sort each group by createdAt desc
+    Object.values(groups).forEach((g) =>
+      g.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
+    );
+    return groups;
+  }, [repairs]);
+
+  const filteredRepairs = useMemo(() => {
+    let results = repairs;
+    if (searchTerm) {
+      const t = searchTerm.toLowerCase();
+      results = results.filter(
+        (r) =>
+          r.registrationNumber.toLowerCase().includes(t) ||
+          (r.carModel && r.carModel.toLowerCase().includes(t)) ||
+          (r.customerName && r.customerName.toLowerCase().includes(t)) ||
+          (r.phoneNumber && r.phoneNumber.includes(t)) ||
+          (r.problemDescription &&
+            r.problemDescription.toLowerCase().includes(t)),
+      );
+    }
+    if (activeTab !== "all" && activeTab !== "customers") {
+      results = results.filter((r) => r.status === activeTab);
+    }
+    return results;
+  }, [repairs, searchTerm, activeTab]);
+
+  const counts = useMemo(
+    () => ({
+      all: repairs.length,
+      submitted: repairs.filter((r) => r.status === "submitted").length,
+      in_garage: repairs.filter((r) => r.status === "in_garage").length,
+      in_progress: repairs.filter((r) => r.status === "in_progress").length,
+      completed: repairs.filter((r) => r.status === "completed").length,
+      customers: Object.keys(customerGroups).length,
+    }),
+    [repairs, customerGroups],
+  );
+
+  const handleStatusUpdate = async (id, status) => {
+    setActionLoading(true);
+    try {
+      const r = repairs.find((x) => x._id === id);
+      await updateRepairStatus(id, {
+        status,
+        mechanicNotes: r?.mechanicNotes || "",
+      });
+      setRepairs((prev) =>
+        prev.map((x) => (x._id === id ? { ...x, status } : x)),
+      );
+    } catch {
+      alert("Error updating status.");
+    } finally {
+      setActionLoading(false);
     }
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case "submitted":
-        return "#ef6c00";
-      case "in_garage":
-        return "#1976d2";
-      case "in_progress":
-        return "#009688";
-      case "completed":
-        return "#4caf50";
-      default:
-        return "#666";
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this repair request? This cannot be undone."))
+      return;
+    setActionLoading(true);
+    try {
+      await deleteRepair(id);
+      setRepairs((prev) => prev.filter((x) => x._id !== id));
+      if (expandedId === id) setExpandedId(null);
+    } catch {
+      alert("Error deleting repair.");
+    } finally {
+      setActionLoading(false);
     }
   };
 
-  const getStatusLabel = (status) => {
-    switch (status) {
-      case "submitted":
-        return "Submitted";
-      case "in_garage":
-        return "In Garage";
-      case "in_progress":
-        return "In Progress";
-      case "completed":
-        return "Completed";
-      default:
-        return status;
-    }
-  };
-
-  const getMediaIcon = (type) => {
-    switch (type) {
-      case "image":
-        return <FaImage />;
-      case "video":
-        return <FaVideo />;
-      case "audio":
-        return <FaMicrophone />;
-      default:
-        return <FaDownload />;
-    }
-  };
-
-  const handlePlayAudio = (url) => {
-    if (playingAudio === url) {
-      setPlayingAudio(null);
-    } else {
-      setPlayingAudio(url);
-    }
-  };
-
-  const openFullscreen = (media) => {
-    setFullscreenMedia(media);
-  };
-
-  const statusOptions = [
-    { value: "submitted", label: "Submitted", icon: <FaCarSide /> },
-    { value: "in_garage", label: "In Garage", icon: <FaTools /> },
-    { value: "in_progress", label: "In Progress", icon: <FaWrench /> },
-    { value: "completed", label: "Completed", icon: <FaCheckCircle /> },
-  ];
-
-  const filterOptions = [
-    { value: "all", label: "All Statuses" },
-    { value: "submitted", label: "Submitted" },
-    { value: "in_garage", label: "In Garage" },
-    { value: "in_progress", label: "In Progress" },
-    { value: "completed", label: "Completed" },
+  const tabs = [
+    { key: "all", label: "All", count: counts.all, color: "#1a1a2e" },
+    {
+      key: "submitted",
+      label: "Submitted",
+      count: counts.submitted,
+      color: "#f39c12",
+    },
+    {
+      key: "in_garage",
+      label: "In Garage",
+      count: counts.in_garage,
+      color: "#0984e3",
+    },
+    {
+      key: "in_progress",
+      label: "In Progress",
+      count: counts.in_progress,
+      color: "#00b894",
+    },
+    {
+      key: "completed",
+      label: "Completed",
+      count: counts.completed,
+      color: "#27ae60",
+    },
+    {
+      key: "customers",
+      label: "Customers",
+      count: counts.customers,
+      color: "#8e44ad",
+    },
   ];
 
   if (loading) {
     return (
-      <div className="container">
+      <div style={{ minHeight: "100vh", background: "var(--bg-main)" }}>
         <Header />
         <div
-          className="glass-effect"
           style={{
-            padding: "50px 20px",
-            textAlign: "center",
-            marginTop: "30px",
-            margin: "20px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            minHeight: "50vh",
+            gap: "16px",
           }}
         >
           <div
             style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "20px",
+              width: "48px",
+              height: "48px",
+              border: "4px solid #e0e0e0",
+              borderTop: "4px solid #c0392b",
+              borderRadius: "50%",
+              animation: "spin 0.8s linear infinite",
+            }}
+          />
+          <p
+            style={{
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontSize: "1rem",
+              color: "#888",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
             }}
           >
-            <div
-              style={{
-                width: "50px",
-                height: "50px",
-                border: "4px solid #e0f2f1",
-                borderTop: "4px solid #009688",
-                borderRadius: "50%",
-                animation: "spin 1s linear infinite",
-              }}
-            ></div>
-            <p style={{ color: "#00695c", fontSize: "16px" }}>
-              Loading repairs...
-            </p>
-          </div>
+            Loading Dashboard…
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="container">
+    <div style={{ minHeight: "100vh", background: "var(--bg-main)" }}>
       <Header />
 
-      {/* Dashboard Header */}
+      {/* Dashboard Top Bar */}
       <div
         style={{
-          backgroundColor: "#d32f2f",
-          color: "white",
-          padding: "20px 15px",
-          borderRadius: "15px",
-          marginBottom: "20px",
-          textAlign: "center",
-          position: "relative",
-          margin: "15px",
+          background: "linear-gradient(135deg,#1a1a2e,#16213e)",
+          borderBottom: "2px solid rgba(192,57,43,0.4)",
+          padding: "20px 0",
         }}
       >
-        <h2
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "10px",
-            fontSize: "1.5rem",
-            marginBottom: "10px",
-          }}
-        >
-          <FaTools /> Mechanic Dashboard
-        </h2>
-        <p style={{ fontSize: "0.9rem", opacity: 0.9 }}>
-          Manage and update repair statuses in real-time
-        </p>
-
-        {/* Stats Row */}
-        <div
-          style={{
-            marginTop: "15px",
-            fontSize: "0.85rem",
-            display: "grid",
-            gridTemplateColumns: "repeat(2, 1fr)",
-            gap: "15px",
-            justifyContent: "center",
-            alignItems: "center",
-          }}
-        >
-          <div>
-            Total: <strong>{repairs.length}</strong>
-          </div>
-          <div>
-            Showing: <strong>{filteredRepairs.length}</strong>
-          </div>
+        <div className="container">
           <div
             style={{
               display: "flex",
+              justifyContent: "space-between",
               alignItems: "center",
-              gap: "5px",
-              justifyContent: "center",
+              flexWrap: "wrap",
+              gap: "16px",
             }}
           >
-            <div
-              style={{
-                width: "8px",
-                height: "8px",
-                borderRadius: "50%",
-                backgroundColor: autoRefresh ? "#4caf50" : "#ff9800",
-                animation: autoRefresh ? "pulse 2s infinite" : "none",
-              }}
-            ></div>
-            <span>Auto: {autoRefresh ? "ON" : "OFF"}</span>
-          </div>
-          <div style={{ fontSize: "0.8rem", opacity: 0.9 }}>
-            Updated:{" "}
-            {lastUpdated.toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-            })}
+            <div>
+              <h2
+                style={{
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontSize: "1.8rem",
+                  fontWeight: 800,
+                  color: "white",
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                }}
+              >
+                <FaTachometerAlt style={{ color: "#c0392b" }} /> Mechanic
+                Dashboard
+              </h2>
+              <p
+                style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.85rem" }}
+              >
+                Last updated: {lastUpdated.toLocaleTimeString()}
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+              <button
+                onClick={handleManualRefresh}
+                style={{
+                  background: "rgba(255,255,255,0.1)",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  color: "white",
+                  padding: "8px 16px",
+                  borderRadius: "20px",
+                  cursor: "pointer",
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontWeight: 700,
+                  fontSize: "0.82rem",
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                <FaSync
+                  style={{
+                    animation: refreshing
+                      ? "spin 0.8s linear infinite"
+                      : "none",
+                  }}
+                />
+                Refresh
+              </button>
+              <button
+                onClick={() => setAutoRefresh((a) => !a)}
+                style={{
+                  background: autoRefresh
+                    ? "rgba(0,184,148,0.2)"
+                    : "rgba(255,255,255,0.08)",
+                  border: `1px solid ${autoRefresh ? "rgba(0,184,148,0.4)" : "rgba(255,255,255,0.15)"}`,
+                  color: autoRefresh ? "#00b894" : "rgba(255,255,255,0.5)",
+                  padding: "8px 14px",
+                  borderRadius: "20px",
+                  cursor: "pointer",
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontWeight: 700,
+                  fontSize: "0.78rem",
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "5px",
+                }}
+              >
+                <div
+                  style={{
+                    width: "7px",
+                    height: "7px",
+                    borderRadius: "50%",
+                    background: autoRefresh ? "#00b894" : "#666",
+                    animation: autoRefresh ? "pulse 2s infinite" : "none",
+                  }}
+                />
+                Auto
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Error Display */}
-      {error && (
-        <div
-          style={{
-            backgroundColor: "#ffebee",
-            color: "#d32f2f",
-            padding: "15px",
-            borderRadius: "10px",
-            margin: "0 15px 20px 15px",
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            border: "1px solid #ffcdd2",
-          }}
-        >
-          <FaExclamationTriangle />
-          <span>{error}</span>
-          <button
-            onClick={handleManualRefresh}
+      <div className="container" style={{ padding: "24px 20px" }}>
+        {/* Error */}
+        {error && (
+          <div
             style={{
-              marginLeft: "auto",
-              background: "#d32f2f",
-              color: "white",
-              border: "none",
-              padding: "5px 15px",
-              borderRadius: "20px",
-              cursor: "pointer",
+              background: "#fff5f5",
+              border: "1px solid #feb2b2",
+              color: "#c0392b",
+              padding: "12px 16px",
+              borderRadius: "10px",
+              marginBottom: "20px",
+              display: "flex",
+              gap: "8px",
+              alignItems: "center",
             }}
           >
-            Retry
-          </button>
-        </div>
-      )}
+            <FaExclamationTriangle style={{ flexShrink: 0 }} />
+            <span style={{ flex: 1 }}>{error}</span>
+            <button
+              onClick={handleManualRefresh}
+              style={{
+                background: "#c0392b",
+                color: "white",
+                border: "none",
+                padding: "4px 12px",
+                borderRadius: "16px",
+                cursor: "pointer",
+                fontFamily: "'Barlow Condensed', sans-serif",
+                fontWeight: 700,
+                fontSize: "0.8rem",
+                letterSpacing: "0.04em",
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
-      {/* Mobile Filter Toggle Button */}
-      <div
-        style={{
-          margin: "0 15px 15px 15px",
-          display: "flex",
-          justifyContent: "flex-end",
-        }}
-      >
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          style={{
-            background: "#009688",
-            color: "white",
-            border: "none",
-            padding: "10px 15px",
-            borderRadius: "50px",
-            fontWeight: "600",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            fontSize: "0.9rem",
-          }}
-        >
-          {showFilters ? <FaTimesIcon /> : <FaBars />}
-          {showFilters ? "Hide Filters" : "Show Filters"}
-        </button>
-      </div>
-
-      {/* Search and Filter Controls */}
-      <div
-        className="glass-effect"
-        style={{
-          padding: showFilters ? "20px 15px" : "0",
-          marginBottom: "20px",
-          display: showFilters ? "block" : "none",
-          margin: "0 15px",
-        }}
-      >
+        {/* Stat Cards */}
         <div
           style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "15px",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+            gap: "12px",
+            marginBottom: "24px",
           }}
         >
-          {/* Search Input */}
-          <div style={{ position: "relative" }}>
+          <StatCard
+            label="Total"
+            value={counts.all}
+            color="#1a1a2e"
+            icon={<FaListUl />}
+          />
+          <StatCard
+            label="Submitted"
+            value={counts.submitted}
+            color="#f39c12"
+            icon={<FaCarSide />}
+          />
+          <StatCard
+            label="In Garage"
+            value={counts.in_garage}
+            color="#0984e3"
+            icon={<FaTools />}
+          />
+          <StatCard
+            label="In Progress"
+            value={counts.in_progress}
+            color="#00b894"
+            icon={<FaWrench />}
+          />
+          <StatCard
+            label="Completed"
+            value={counts.completed}
+            color="#27ae60"
+            icon={<FaCheckCircle />}
+          />
+          <StatCard
+            label="Customers"
+            value={counts.customers}
+            color="#8e44ad"
+            icon={<FaUser />}
+          />
+        </div>
+
+        {/* Search + Tabs */}
+        <div style={{ marginBottom: "20px" }}>
+          {/* Search */}
+          <div style={{ position: "relative", marginBottom: "12px" }}>
             <FaSearch
               style={{
                 position: "absolute",
-                left: "15px",
+                left: "16px",
                 top: "50%",
                 transform: "translateY(-50%)",
-                color: "#666",
+                color: "#aaa",
                 zIndex: 1,
               }}
             />
             <input
               type="text"
-              placeholder="Search repairs..."
+              placeholder="Search by plate, name, phone, or description…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{
                 width: "100%",
-                padding: "14px 14px 14px 45px",
-                border: "2px solid #b2dfdb",
+                padding: "13px 16px 13px 44px",
+                border: "2px solid #e0e0e0",
                 borderRadius: "50px",
-                fontSize: "16px",
-                fontFamily: "inherit",
+                fontFamily: "'Barlow', sans-serif",
+                fontSize: "15px",
+                background: "white",
                 boxSizing: "border-box",
               }}
             />
-          </div>
-
-          {/* Status Filter */}
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <FaFilter style={{ color: "#009688", flexShrink: 0 }} />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "14px 15px",
-                border: "2px solid #b2dfdb",
-                borderRadius: "50px",
-                fontSize: "16px",
-                fontFamily: "inherit",
-                backgroundColor: "white",
-                cursor: "pointer",
-              }}
-            >
-              {filterOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Action Buttons */}
-          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            {(searchTerm || statusFilter !== "all") && (
+            {searchTerm && (
               <button
-                onClick={clearFilters}
+                onClick={() => setSearchTerm("")}
                 style={{
-                  flex: 1,
-                  background: "transparent",
-                  border: "2px solid #ff9800",
-                  color: "#ff9800",
-                  padding: "12px",
-                  borderRadius: "50px",
-                  fontWeight: "600",
+                  position: "absolute",
+                  right: "12px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "#f0f0f0",
+                  border: "none",
+                  width: "26px",
+                  height: "26px",
+                  borderRadius: "50%",
                   cursor: "pointer",
-                  transition: "all 0.3s ease",
+                  color: "#666",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  gap: "8px",
-                  fontSize: "0.9rem",
-                  minWidth: "140px",
                 }}
               >
-                Clear Filters
+                <FaTimes size={11} />
               </button>
             )}
-
-            <button
-              onClick={handleManualRefresh}
-              disabled={loading}
-              style={{
-                flex: 1,
-                background: "#009688",
-                color: "white",
-                border: "none",
-                padding: "12px",
-                borderRadius: "50px",
-                fontWeight: "600",
-                cursor: loading ? "not-allowed" : "pointer",
-                transition: "all 0.3s ease",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                minWidth: "140px",
-                opacity: loading ? 0.5 : 1,
-              }}
-            >
-              <FaSync
-                style={{
-                  animation: loading ? "spin 1s linear infinite" : "none",
-                }}
-              />
-              {loading ? "Loading..." : "Refresh"}
-            </button>
-
-            <button
-              onClick={() => setAutoRefresh(!autoRefresh)}
-              style={{
-                flex: 1,
-                background: autoRefresh ? "#4caf50" : "#ff9800",
-                color: "white",
-                border: "none",
-                padding: "12px",
-                borderRadius: "50px",
-                fontWeight: "600",
-                cursor: "pointer",
-                transition: "all 0.3s ease",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                minWidth: "140px",
-              }}
-            >
-              Auto: {autoRefresh ? "ON" : "OFF"}
-            </button>
           </div>
-        </div>
-      </div>
 
-      {/* Repairs List */}
-      <div style={{ padding: "0 15px", display: "grid", gap: "15px" }}>
-        {filteredRepairs.length === 0 ? (
+          {/* Tab Bar */}
           <div
-            className="glass-effect"
             style={{
-              padding: "30px 20px",
-              textAlign: "center",
-              color: "#666",
+              display: "flex",
+              gap: "6px",
+              overflowX: "auto",
+              paddingBottom: "4px",
+              scrollbarWidth: "none",
             }}
           >
-            <p style={{ fontSize: "16px", marginBottom: "10px" }}>
-              {searchTerm || statusFilter !== "all"
-                ? "No matching repairs found"
-                : "No repair requests found"}
-            </p>
-            <p style={{ fontSize: "0.9rem" }}>
-              {searchTerm || statusFilter !== "all"
-                ? "Try adjusting your search or filter criteria"
-                : "When customers submit repair requests, they will appear here."}
-            </p>
-            {(searchTerm || statusFilter !== "all") && (
+            {tabs.map(({ key, label, count, color }) => (
               <button
-                onClick={clearFilters}
+                key={key}
+                onClick={() => setActiveTab(key)}
                 style={{
-                  marginTop: "20px",
-                  background: "#009688",
-                  color: "white",
+                  flexShrink: 0,
+                  padding: "8px 16px",
+                  borderRadius: "20px",
                   border: "none",
-                  padding: "12px 25px",
-                  borderRadius: "50px",
-                  fontWeight: "600",
+                  background: activeTab === key ? color : "white",
+                  color: activeTab === key ? "white" : "#666",
                   cursor: "pointer",
-                  width: "100%",
-                  maxWidth: "200px",
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontWeight: 700,
+                  fontSize: "0.82rem",
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  transition: "all 0.2s",
+                  boxShadow:
+                    activeTab === key
+                      ? `0 4px 12px ${color}33`
+                      : "0 1px 4px rgba(0,0,0,0.06)",
+                  border: activeTab === key ? "none" : "1px solid #e0e0e0",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
                 }}
               >
-                Clear Filters
+                {label}
+                <span
+                  style={{
+                    background:
+                      activeTab === key ? "rgba(255,255,255,0.25)" : "#f0f0f0",
+                    color: activeTab === key ? "white" : "#888",
+                    borderRadius: "10px",
+                    padding: "0 6px",
+                    fontSize: "0.75rem",
+                    fontWeight: 700,
+                    lineHeight: "18px",
+                  }}
+                >
+                  {count}
+                </span>
               </button>
-            )}
+            ))}
           </div>
-        ) : (
-          filteredRepairs.map((repair) => (
-            <div
-              key={repair._id}
-              className="glass-effect"
-              style={{
-                padding: "15px",
-                animation: "fadeIn 0.5s ease",
-              }}
-            >
-              {/* Repair Header */}
+        </div>
+
+        {/* ─── CUSTOMER TAB ─── */}
+        {activeTab === "customers" && (
+          <div style={{ display: "grid", gap: "12px" }}>
+            {Object.entries(customerGroups).length === 0 ? (
               <div
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  cursor: "pointer",
-                  gap: "10px",
+                  textAlign: "center",
+                  padding: "40px 20px",
+                  color: "#aaa",
                 }}
-                onClick={() => toggleExpand(repair._id)}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "8px",
-                    flex: 1,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <h3
-                      style={{
-                        color: "#00695c",
-                        margin: 0,
-                        fontSize: "1.1rem",
-                      }}
-                    >
-                      {repair.registrationNumber}
-                    </h3>
-                    <span
-                      style={{
-                        backgroundColor: getStatusColor(repair.status) + "20",
-                        color: getStatusColor(repair.status),
-                        padding: "4px 12px",
-                        borderRadius: "20px",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "5px",
-                        fontSize: "0.75rem",
-                        fontWeight: "600",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {getStatusIcon(repair.status)}
-                      {getStatusLabel(repair.status)}
-                    </span>
-                  </div>
-                  <div style={{ color: "#666", fontSize: "0.85rem" }}>
-                    {repair.carModel || "No model"} •{" "}
-                    {repair.customerName || "Anonymous"}
-                  </div>
-                  <div style={{ color: "#666", fontSize: "0.8rem" }}>
-                    {new Date(repair.createdAt).toLocaleDateString()}
-                    {repair.multimedia && repair.multimedia.length > 0 && (
-                      <span style={{ marginLeft: "10px", color: "#009688" }}>
-                        📎 {repair.multimedia.length} attachment(s)
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  {expandedRepairId === repair._id ? (
-                    <FaChevronUp style={{ color: "#009688" }} />
-                  ) : (
-                    <FaChevronDown style={{ color: "#009688" }} />
-                  )}
-                </div>
+                No customers yet.
               </div>
-
-              {/* Expanded Content */}
-              {expandedRepairId === repair._id && (
-                <div
-                  style={{
-                    marginTop: "15px",
-                    paddingTop: "15px",
-                    borderTop: "1px solid #e0e0e0",
-                  }}
-                >
-                  {/* Basic Info */}
+            ) : (
+              Object.entries(customerGroups).map(([reg, reps]) => {
+                const latest = reps[0];
+                return (
                   <div
+                    key={reg}
                     style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr",
-                      gap: "15px",
-                      marginBottom: "15px",
-                    }}
-                  >
-                    <div>
-                      <strong
-                        style={{
-                          color: "#00695c",
-                          display: "block",
-                          marginBottom: "5px",
-                          fontSize: "0.95rem",
-                        }}
-                      >
-                        Vehicle Details
-                      </strong>
-                      <p
-                        style={{
-                          color: "#424242",
-                          margin: "5px 0",
-                          fontSize: "0.9rem",
-                        }}
-                      >
-                        <strong>Model:</strong>{" "}
-                        {repair.carModel || "Not specified"}
-                      </p>
-                      <p
-                        style={{
-                          color: "#424242",
-                          margin: "5px 0",
-                          fontSize: "0.9rem",
-                        }}
-                      >
-                        <strong>Customer:</strong>{" "}
-                        {repair.customerName || "Anonymous"}
-                      </p>
-                      <p
-                        style={{
-                          color: "#424242",
-                          margin: "5px 0",
-                          fontSize: "0.9rem",
-                        }}
-                      >
-                        <strong>Phone:</strong>{" "}
-                        {repair.phoneNumber || "Not provided"}
-                      </p>
-                    </div>
-
-                    <div>
-                      <strong
-                        style={{
-                          color: "#00695c",
-                          display: "block",
-                          marginBottom: "5px",
-                          fontSize: "0.95rem",
-                        }}
-                      >
-                        Timeline
-                      </strong>
-                      <p
-                        style={{
-                          color: "#424242",
-                          margin: "5px 0",
-                          fontSize: "0.9rem",
-                        }}
-                      >
-                        <strong>Submitted:</strong>{" "}
-                        {new Date(repair.createdAt).toLocaleString()}
-                      </p>
-                      <p
-                        style={{
-                          color: "#424242",
-                          margin: "5px 0",
-                          fontSize: "0.9rem",
-                        }}
-                      >
-                        <strong>Last Updated:</strong>{" "}
-                        {new Date(
-                          repair.updatedAt || repair.createdAt,
-                        ).toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Problem Description */}
-                  <div style={{ marginBottom: "15px" }}>
-                    <strong
-                      style={{
-                        color: "#00695c",
-                        display: "block",
-                        marginBottom: "8px",
-                        fontSize: "0.95rem",
-                      }}
-                    >
-                      Problem Description:
-                    </strong>
-                    <div
-                      style={{
-                        padding: "12px",
-                        backgroundColor: "#f5f5f5",
-                        borderRadius: "8px",
-                        color: "#424242",
-                        lineHeight: "1.5",
-                        fontSize: "0.9rem",
-                      }}
-                    >
-                      {repair.problemDescription}
-                    </div>
-                  </div>
-
-                  {/* Multimedia Section */}
-                  {repair.multimedia && repair.multimedia.length > 0 && (
-                    <div style={{ marginBottom: "15px" }}>
-                      <strong
-                        style={{
-                          color: "#00695c",
-                          display: "block",
-                          marginBottom: "10px",
-                          fontSize: "0.95rem",
-                        }}
-                      >
-                        Customer Attachments:
-                      </strong>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns:
-                            "repeat(auto-fill, minmax(120px, 1fr))",
-                          gap: "10px",
-                        }}
-                      >
-                        {repair.multimedia.map((media, index) => (
-                          <div
-                            key={index}
-                            style={{
-                              position: "relative",
-                              borderRadius: "8px",
-                              overflow: "hidden",
-                              backgroundColor: "#f0f0f0",
-                              aspectRatio: "1",
-                              cursor: "pointer",
-                            }}
-                          >
-                            {media.type === "image" ? (
-                              <img
-                                src={media.url}
-                                alt="Customer attachment"
-                                style={{
-                                  width: "100%",
-                                  height: "100%",
-                                  objectFit: "cover",
-                                }}
-                                onClick={() => openFullscreen(media)}
-                              />
-                            ) : media.type === "video" ? (
-                              <div
-                                style={{
-                                  width: "100%",
-                                  height: "100%",
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  backgroundColor: "#e0f2f1",
-                                  color: "#009688",
-                                  fontSize: "32px",
-                                }}
-                                onClick={() => window.open(media.url, "_blank")}
-                              >
-                                <FaVideo />
-                                <span
-                                  style={{
-                                    fontSize: "12px",
-                                    marginTop: "5px",
-                                    color: "#666",
-                                  }}
-                                >
-                                  Video
-                                </span>
-                              </div>
-                            ) : (
-                              <div
-                                style={{
-                                  width: "100%",
-                                  height: "100%",
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  backgroundColor: "#e0f2f1",
-                                  color: "#009688",
-                                  fontSize: "32px",
-                                }}
-                              >
-                                <FaMicrophone />
-                                <span
-                                  style={{
-                                    fontSize: "12px",
-                                    marginTop: "5px",
-                                    color: "#666",
-                                  }}
-                                >
-                                  Audio
-                                </span>
-                              </div>
-                            )}
-                            <button
-                              onClick={() => openFullscreen(media)}
-                              style={{
-                                position: "absolute",
-                                top: "5px",
-                                right: "5px",
-                                width: "24px",
-                                height: "24px",
-                                borderRadius: "50%",
-                                backgroundColor: "rgba(255,255,255,0.9)",
-                                border: "none",
-                                color: "#009688",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                cursor: "pointer",
-                              }}
-                            >
-                              <FaExpand size={12} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Audio Player */}
-                      {playingAudio && (
-                        <div
-                          style={{
-                            marginTop: "10px",
-                            padding: "10px",
-                            backgroundColor: "#e0f2f1",
-                            borderRadius: "8px",
-                          }}
-                        >
-                          <audio
-                            controls
-                            autoPlay
-                            src={playingAudio}
-                            style={{ width: "100%" }}
-                            onEnded={() => setPlayingAudio(null)}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Mechanic Notes Section */}
-                  <div style={{ marginBottom: "15px" }}>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        marginBottom: "8px",
-                      }}
-                    >
-                      <strong style={{ color: "#00695c", fontSize: "0.95rem" }}>
-                        Mechanic Notes:
-                      </strong>
-                      {editingRepairId !== repair._id && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            startEditNotes(repair);
-                          }}
-                          disabled={actionLoading}
-                          style={{
-                            background: "#ff9800",
-                            color: "white",
-                            border: "none",
-                            padding: "6px 12px",
-                            borderRadius: "50px",
-                            fontWeight: "600",
-                            cursor: actionLoading ? "not-allowed" : "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "5px",
-                            fontSize: "0.85rem",
-                            opacity: actionLoading ? 0.5 : 1,
-                          }}
-                        >
-                          <FaEdit /> {repair.mechanicNotes ? "Edit" : "Add"}
-                        </button>
-                      )}
-                    </div>
-
-                    {editingRepairId === repair._id ? (
-                      <div>
-                        <textarea
-                          value={mechanicNotes}
-                          onChange={(e) => setMechanicNotes(e.target.value)}
-                          placeholder="Enter mechanic notes..."
-                          style={{
-                            width: "100%",
-                            padding: "12px",
-                            marginBottom: "12px",
-                            border: "2px solid #b2dfdb",
-                            borderRadius: "8px",
-                            fontFamily: "inherit",
-                            fontSize: "0.9rem",
-                            minHeight: "80px",
-                            boxSizing: "border-box",
-                          }}
-                          rows="3"
-                        />
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: "10px",
-                            justifyContent: "flex-end",
-                          }}
-                        >
-                          <button
-                            style={{
-                              background: "#009688",
-                              color: "white",
-                              border: "none",
-                              padding: "8px 16px",
-                              borderRadius: "50px",
-                              fontWeight: "600",
-                              cursor: actionLoading ? "not-allowed" : "pointer",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "5px",
-                              fontSize: "0.85rem",
-                              opacity: actionLoading ? 0.5 : 1,
-                            }}
-                            onClick={() => saveNotes(repair._id)}
-                            disabled={actionLoading}
-                          >
-                            <FaSave /> {actionLoading ? "Saving..." : "Save"}
-                          </button>
-                          <button
-                            style={{
-                              background: "transparent",
-                              border: "2px solid #d32f2f",
-                              color: "#d32f2f",
-                              padding: "8px 16px",
-                              borderRadius: "50px",
-                              fontWeight: "600",
-                              cursor: actionLoading ? "not-allowed" : "pointer",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "5px",
-                              fontSize: "0.85rem",
-                              opacity: actionLoading ? 0.5 : 1,
-                            }}
-                            onClick={cancelEdit}
-                            disabled={actionLoading}
-                          >
-                            <FaTimes /> Cancel
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div
-                        style={{
-                          padding: "12px",
-                          backgroundColor: "#e0f2f1",
-                          borderRadius: "8px",
-                          color: "#424242",
-                          lineHeight: "1.5",
-                          minHeight: "40px",
-                          borderLeft: "4px solid #009688",
-                          fontSize: "0.9rem",
-                        }}
-                      >
-                        {repair.mechanicNotes ||
-                          "No notes added yet. Click 'Add' to add notes."}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Status Update Section */}
-                  <div style={{ marginBottom: "15px" }}>
-                    <strong
-                      style={{
-                        color: "#00695c",
-                        display: "block",
-                        marginBottom: "8px",
-                        fontSize: "0.95rem",
-                      }}
-                    >
-                      Update Status:
-                    </strong>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(2, 1fr)",
-                        gap: "8px",
-                      }}
-                    >
-                      {statusOptions.map((option) => (
-                        <button
-                          key={option.value}
-                          style={{
-                            background:
-                              repair.status === option.value
-                                ? "#00796b"
-                                : "#009688",
-                            color: "white",
-                            border: "none",
-                            padding: "10px 12px",
-                            borderRadius: "8px",
-                            fontWeight: "600",
-                            cursor:
-                              repair.status === option.value || actionLoading
-                                ? "default"
-                                : "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            gap: "6px",
-                            opacity:
-                              repair.status === option.value
-                                ? 0.8
-                                : actionLoading
-                                  ? 0.5
-                                  : 1,
-                            fontSize: "0.85rem",
-                          }}
-                          onClick={() =>
-                            handleStatusUpdate(repair._id, option.value)
-                          }
-                          disabled={
-                            repair.status === option.value || actionLoading
-                          }
-                        >
-                          {option.icon}
-                          <span style={{ fontSize: "0.8rem" }}>
-                            {option.label}
-                          </span>
-                          {repair.status === option.value && " ✓"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div
-                    style={{
+                      background: "white",
+                      borderRadius: "12px",
+                      border: "1px solid #e0e0e0",
+                      padding: "16px",
+                      cursor: "pointer",
+                      transition: "box-shadow 0.2s",
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
-                      marginTop: "15px",
-                      paddingTop: "15px",
-                      borderTop: "1px solid #e0e0e0",
+                      gap: "12px",
                     }}
+                    onClick={() => setProfileReg(reg)}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.boxShadow =
+                        "0 4px 16px rgba(0,0,0,0.1)")
+                    }
+                    onMouseLeave={(e) =>
+                      (e.currentTarget.style.boxShadow = "none")
+                    }
                   >
-                    <div style={{ fontSize: "0.8rem", color: "#666" }}>
-                      ID: {repair._id.substring(repair._id.length - 6)}
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteRepair(repair._id);
-                      }}
-                      disabled={actionLoading}
+                    <div
                       style={{
-                        background: "#ffebee",
-                        color: "#d32f2f",
-                        border: "none",
-                        padding: "8px 16px",
-                        borderRadius: "50px",
-                        fontWeight: "600",
-                        cursor: actionLoading ? "not-allowed" : "pointer",
                         display: "flex",
                         alignItems: "center",
-                        gap: "6px",
-                        fontSize: "0.85rem",
-                        opacity: actionLoading ? 0.5 : 1,
+                        gap: "14px",
+                        flex: 1,
+                        minWidth: 0,
                       }}
                     >
-                      <FaTrash /> Delete
-                    </button>
+                      <div
+                        style={{
+                          width: "44px",
+                          height: "44px",
+                          background: "linear-gradient(135deg,#1a1a2e,#16213e)",
+                          borderRadius: "10px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: "#c0392b",
+                          fontSize: "18px",
+                          flexShrink: 0,
+                        }}
+                      >
+                        <FaIdCard />
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontFamily: "'Barlow Condensed', sans-serif",
+                            fontSize: "1.1rem",
+                            fontWeight: 800,
+                            color: "#1a1a2e",
+                            letterSpacing: "0.04em",
+                          }}
+                        >
+                          {reg}
+                        </div>
+                        <div
+                          style={{
+                            color: "#666",
+                            fontSize: "0.85rem",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {latest.customerName || "Anonymous"} ·{" "}
+                          {latest.carModel || "Unknown model"}
+                        </div>
+                        <div
+                          style={{
+                            color: "#aaa",
+                            fontSize: "0.78rem",
+                            marginTop: "2px",
+                          }}
+                        >
+                          {reps.length} repair{reps.length > 1 ? "s" : ""} ·
+                          Last: {fmt(latest.createdAt)}
+                        </div>
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "flex-end",
+                        gap: "6px",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <StatusBadge status={latest.status} size="sm" />
+                      <FaAngleRight style={{ color: "#ccc" }} />
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          ))
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* ─── REPAIRS LIST ─── */}
+        {activeTab !== "customers" && (
+          <div style={{ display: "grid", gap: "12px" }}>
+            {filteredRepairs.length === 0 ? (
+              <div
+                style={{
+                  background: "white",
+                  borderRadius: "12px",
+                  border: "1px solid #e0e0e0",
+                  padding: "48px 24px",
+                  textAlign: "center",
+                  color: "#aaa",
+                }}
+              >
+                <FaClipboardList
+                  style={{
+                    fontSize: "40px",
+                    marginBottom: "12px",
+                    opacity: 0.3,
+                  }}
+                />
+                <p
+                  style={{
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                    fontSize: "1.1rem",
+                    fontWeight: 700,
+                    letterSpacing: "0.04em",
+                    marginBottom: "6px",
+                    color: "#888",
+                  }}
+                >
+                  {searchTerm
+                    ? "No matching repairs"
+                    : "No repairs in this category"}
+                </p>
+                <p style={{ fontSize: "0.88rem" }}>
+                  {searchTerm
+                    ? "Try a different search term."
+                    : "Repairs will appear here when submitted."}
+                </p>
+                {searchTerm && (
+                  <button
+                    onClick={() => setSearchTerm("")}
+                    style={{
+                      marginTop: "16px",
+                      background: "#1a1a2e",
+                      color: "white",
+                      border: "none",
+                      padding: "10px 24px",
+                      borderRadius: "20px",
+                      cursor: "pointer",
+                      fontFamily: "'Barlow Condensed', sans-serif",
+                      fontWeight: 700,
+                      fontSize: "0.85rem",
+                      letterSpacing: "0.04em",
+                    }}
+                  >
+                    Clear Search
+                  </button>
+                )}
+              </div>
+            ) : (
+              filteredRepairs.map((repair) => (
+                <RepairCard
+                  key={repair._id}
+                  repair={repair}
+                  isExpanded={expandedId === repair._id}
+                  onToggle={() =>
+                    setExpandedId((p) => (p === repair._id ? null : repair._id))
+                  }
+                  onStatusUpdate={handleStatusUpdate}
+                  onDelete={handleDelete}
+                  onViewProfile={(reg) => setProfileReg(reg)}
+                  customerRepairs={
+                    customerGroups[repair.registrationNumber] || [repair]
+                  }
+                  actionLoading={actionLoading}
+                  onOpenMedia={setFullscreenMedia}
+                />
+              ))
+            )}
+          </div>
         )}
       </div>
 
-      {/* Fullscreen Media Modal */}
-      {fullscreenMedia && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: "rgba(0,0,0,0.95)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 2000,
-            padding: "20px",
-          }}
-          onClick={() => setFullscreenMedia(null)}
-        >
-          <button
-            style={{
-              position: "absolute",
-              top: "20px",
-              right: "20px",
-              background: "white",
-              border: "none",
-              width: "40px",
-              height: "40px",
-              borderRadius: "50%",
-              fontSize: "20px",
-              cursor: "pointer",
-              zIndex: 2001,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-            onClick={() => setFullscreenMedia(null)}
-          >
-            ×
-          </button>
+      <Footer />
 
-          {fullscreenMedia.type === "image" ? (
-            <img
-              src={fullscreenMedia.url}
-              alt="Fullscreen view"
-              style={{
-                maxWidth: "100%",
-                maxHeight: "90vh",
-                objectFit: "contain",
-              }}
-            />
-          ) : fullscreenMedia.type === "video" ? (
-            <video
-              src={fullscreenMedia.url}
-              controls
-              autoPlay
-              style={{
-                maxWidth: "100%",
-                maxHeight: "90vh",
-              }}
-            />
-          ) : (
-            <div
-              style={{
-                backgroundColor: "white",
-                padding: "30px",
-                borderRadius: "15px",
-                maxWidth: "500px",
-                width: "100%",
-              }}
-            >
-              <h3 style={{ color: "#00695c", marginBottom: "20px" }}>
-                Audio Playback
-              </h3>
-              <audio
-                src={fullscreenMedia.url}
-                controls
-                autoPlay
-                style={{ width: "100%" }}
-              />
-            </div>
-          )}
-        </div>
+      {/* Modals */}
+      <MediaModal
+        media={fullscreenMedia}
+        onClose={() => setFullscreenMedia(null)}
+      />
+
+      {profileReg && (
+        <CustomerProfile
+          repairs={customerGroups[profileReg] || []}
+          onClose={() => setProfileReg(null)}
+        />
       )}
 
-      <style>
-        {`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-          @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-          }
-          @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-          }
-
-          /* Mobile First Styles */
-          .container {
-            padding: 0;
-            margin: 0;
-            max-width: 100%;
-            overflow-x: hidden;
-          }
-
-          .glass-effect {
-            background: rgba(255, 255, 255, 0.9);
-            backdrop-filter: blur(10px);
-            border-radius: 15px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-          }
-
-          input, textarea, select {
-            font-size: 16px !important;
-          }
-
-          input:focus, textarea:focus, select:focus {
-            border-color: #009688 !important;
-            outline: none;
-            box-shadow: 0 0 0 3px rgba(0, 150, 136, 0.1) !important;
-          }
-
-          button {
-            touch-action: manipulation;
-          }
-
-          /* Tablet Styles */
-          @media (min-width: 768px) {
-            .container {
-              padding: 0 20px;
-            }
-
-            .glass-effect {
-              margin: 20px auto;
-              max-width: 95%;
-            }
-
-            div[style*="background-color: #d32f2f"] {
-              margin: 20px auto;
-              max-width: 95%;
-            }
-
-            div[style*="Update Status:"] > div {
-              grid-template-columns: repeat(4, 1fr) !important;
-            }
-
-            .mobile-filter-toggle {
-              display: none !important;
-            }
-          }
-
-          /* Desktop Styles */
-          @media (min-width: 1024px) {
-            .container {
-              padding: 0 40px;
-              max-width: 1400px;
-              margin: 0 auto;
-            }
-
-            .glass-effect {
-              max-width: 1200px;
-            }
-
-            div[style*="background-color: #d32f2f"] {
-              max-width: 1200px;
-            }
-
-            div[style*="Repairs List"] {
-              max-width: 1200px;
-            }
-
-            form > div:first-child > div {
-              grid-template-columns: 1fr 1fr !important;
-              gap: 30px !important;
-            }
-
-            .btn-primary {
-              max-width: 300px !important;
-            }
-          }
-
-          /* Large Desktop */
-          @media (min-width: 1440px) {
-            .container {
-              padding: 0 60px;
-            }
-          }
-        `}
-      </style>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+        @keyframes fadeUp { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes slideUp { from { opacity:0; transform:translateY(40px); } to { opacity:1; transform:translateY(0); } }
+        input:focus, textarea:focus, select:focus {
+          outline: none !important;
+          border-color: #c0392b !important;
+          box-shadow: 0 0 0 3px rgba(192,57,43,0.08) !important;
+        }
+        ::-webkit-scrollbar { height: 5px; width: 5px; }
+        ::-webkit-scrollbar-track { background: #f0f2f5; }
+        ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+      `}</style>
     </div>
   );
 };

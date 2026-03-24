@@ -7,31 +7,632 @@ import {
   FaPaperPlane,
   FaImage,
   FaVideo,
-  FaMicrophone,
   FaTimes,
   FaCloudUploadAlt,
   FaCamera,
   FaStop,
   FaExclamationTriangle,
   FaInfoCircle,
+  FaUserPlus,
+  FaUserCheck,
+  FaSearch,
+  FaHistory,
+  FaPlus,
+  FaChevronDown,
+  FaChevronUp,
+  FaCheckCircle,
+  FaClock,
+  FaWrench,
+  FaTools,
+  FaCarSide,
+  FaSyncAlt,
+  FaArrowLeft,
 } from "react-icons/fa";
 import {
   submitRepairRequest,
+  trackRepair,
   isValidMediaFile,
   formatFileSize,
 } from "../services/api";
 import Header from "../components/Header";
+import Footer from "../components/Footer";
+import StatusBadge from "../components/StatusBadge";
 
-const CustomerForm = () => {
+/* ─── Helpers ─────────────────────────────────────────────────────────────── */
+const formatDate = (d) =>
+  new Date(d).toLocaleDateString("en-KE", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+/* ─── Styles ──────────────────────────────────────────────────────────────── */
+const inputStyle = {
+  width: "100%",
+  padding: "13px 16px",
+  border: "2px solid #e0e0e0",
+  borderRadius: "10px",
+  fontSize: "15px",
+  fontFamily: "'Barlow', sans-serif",
+  background: "#fafafa",
+  color: "#1a1a2e",
+  transition: "all 0.2s",
+  boxSizing: "border-box",
+};
+
+const labelStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  marginBottom: "8px",
+  fontFamily: "'Barlow Condensed', sans-serif",
+  fontSize: "0.85rem",
+  fontWeight: 700,
+  letterSpacing: "0.07em",
+  textTransform: "uppercase",
+  color: "#555",
+};
+
+/* ─── Sub-components ─────────────────────────────────────────────────────── */
+
+const ToggleSelector = ({ mode, onChange }) => (
+  <div
+    style={{
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: "12px",
+      marginBottom: "28px",
+    }}
+  >
+    {[
+      {
+        key: "new",
+        icon: <FaUserPlus size={22} />,
+        label: "New Customer",
+        sub: "First time? Start here",
+      },
+      {
+        key: "existing",
+        icon: <FaUserCheck size={22} />,
+        label: "Existing Customer",
+        sub: "Track or add a repair",
+      },
+    ].map(({ key, icon, label, sub }) => (
+      <button
+        key={key}
+        type="button"
+        onClick={() => onChange(key)}
+        style={{
+          padding: "20px 16px",
+          borderRadius: "12px",
+          border: `2px solid ${mode === key ? "#c0392b" : "#e0e0e0"}`,
+          background:
+            mode === key ? "linear-gradient(135deg,#c0392b,#96281b)" : "white",
+          color: mode === key ? "white" : "#555",
+          cursor: "pointer",
+          transition: "all 0.25s",
+          textAlign: "center",
+          boxShadow: mode === key ? "0 4px 20px rgba(192,57,43,0.3)" : "none",
+        }}
+      >
+        <div style={{ marginBottom: "8px", opacity: mode === key ? 1 : 0.6 }}>
+          {icon}
+        </div>
+        <div
+          style={{
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontWeight: 700,
+            fontSize: "1rem",
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+          }}
+        >
+          {label}
+        </div>
+        <div
+          style={{
+            fontSize: "0.78rem",
+            opacity: 0.75,
+            marginTop: "4px",
+          }}
+        >
+          {sub}
+        </div>
+      </button>
+    ))}
+  </div>
+);
+
+/* ─── Existing Customer Lookup ─────────────────────────────────────────────── */
+const ExistingCustomerView = ({ onAddRepair, onBack }) => {
+  const [regNumber, setRegNumber] = useState("");
+  const [phone, setPhone] = useState("");
+  const [customerData, setCustomerData] = useState(null);
+  const [lookupError, setLookupError] = useState("");
+  const [looking, setLooking] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+
+  const handleLookup = async (e) => {
+    e.preventDefault();
+    if (!regNumber.trim() || !phone.trim()) {
+      setLookupError("Both registration number and phone number are required.");
+      return;
+    }
+    setLooking(true);
+    setLookupError("");
+    setCustomerData(null);
+    try {
+      const repair = await trackRepair(regNumber.trim());
+      // Verify phone matches
+      if (
+        !repair.phoneNumber ||
+        repair.phoneNumber.replace(/\s/g, "") !== phone.replace(/\s/g, "")
+      ) {
+        setLookupError(
+          "No matching record found. Please check your registration number and phone number.",
+        );
+      } else {
+        setCustomerData(repair);
+      }
+    } catch (err) {
+      setLookupError(
+        err.message || "No record found. Please check your details.",
+      );
+    } finally {
+      setLooking(false);
+    }
+  };
+
+  const statusSteps = ["submitted", "in_garage", "in_progress", "completed"];
+  const stepLabels = {
+    submitted: "Submitted",
+    in_garage: "In Garage",
+    in_progress: "In Progress",
+    completed: "Completed",
+  };
+  const stepIcons = {
+    submitted: <FaCarSide />,
+    in_garage: <FaTools />,
+    in_progress: <FaWrench />,
+    completed: <FaCheckCircle />,
+  };
+  const stepColors = {
+    submitted: "#f39c12",
+    in_garage: "#0984e3",
+    in_progress: "#00b894",
+    completed: "#27ae60",
+  };
+
+  if (customerData) {
+    const currentStepIdx = statusSteps.indexOf(customerData.status);
+    return (
+      <div style={{ animation: "fadeUp 0.4s ease both" }}>
+        {/* Customer Header Card */}
+        <div
+          style={{
+            background: "linear-gradient(135deg,#1a1a2e,#16213e)",
+            borderRadius: "12px",
+            padding: "24px",
+            marginBottom: "20px",
+            color: "white",
+            position: "relative",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              height: "3px",
+              background: "linear-gradient(90deg,#c0392b,#f39c12)",
+            }}
+          />
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              flexWrap: "wrap",
+              gap: "12px",
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontSize: "1.6rem",
+                  fontWeight: 800,
+                  letterSpacing: "0.06em",
+                }}
+              >
+                {customerData.registrationNumber}
+              </div>
+              <div
+                style={{ opacity: 0.7, fontSize: "0.9rem", marginTop: "4px" }}
+              >
+                {customerData.carModel || "Vehicle"} ·{" "}
+                {customerData.customerName || "Customer"}
+              </div>
+              <div
+                style={{ opacity: 0.5, fontSize: "0.8rem", marginTop: "2px" }}
+              >
+                {customerData.phoneNumber}
+              </div>
+            </div>
+            <StatusBadge status={customerData.status} size="lg" />
+          </div>
+        </div>
+
+        {/* Progress Stepper */}
+        <div
+          style={{
+            background: "white",
+            borderRadius: "12px",
+            padding: "20px",
+            marginBottom: "20px",
+            border: "1px solid #e0e0e0",
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontSize: "0.85rem",
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "#888",
+              marginBottom: "16px",
+            }}
+          >
+            Repair Progress
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "0" }}>
+            {statusSteps.map((step, idx) => {
+              const done = idx <= currentStepIdx;
+              const active = idx === currentStepIdx;
+              return (
+                <React.Fragment key={step}>
+                  {idx > 0 && (
+                    <div
+                      style={{
+                        flex: 1,
+                        height: "3px",
+                        background:
+                          idx <= currentStepIdx
+                            ? stepColors[statusSteps[currentStepIdx]]
+                            : "#e0e0e0",
+                        transition: "background 0.4s",
+                      }}
+                    />
+                  )}
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: "6px",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: "36px",
+                        height: "36px",
+                        borderRadius: "50%",
+                        background: done
+                          ? stepColors[statusSteps[currentStepIdx]]
+                          : "#e0e0e0",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: done ? "white" : "#aaa",
+                        fontSize: "14px",
+                        border: active
+                          ? `3px solid ${stepColors[step]}`
+                          : "3px solid transparent",
+                        boxSizing: "border-box",
+                        transition: "all 0.3s",
+                        boxShadow: active
+                          ? `0 0 0 3px ${stepColors[step]}33`
+                          : "none",
+                      }}
+                    >
+                      {stepIcons[step]}
+                    </div>
+                    <span
+                      style={{
+                        fontSize: "0.65rem",
+                        fontFamily: "'Barlow Condensed', sans-serif",
+                        fontWeight: active ? 700 : 500,
+                        color: active
+                          ? stepColors[step]
+                          : done
+                            ? "#555"
+                            : "#aaa",
+                        letterSpacing: "0.04em",
+                        textTransform: "uppercase",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {stepLabels[step]}
+                    </span>
+                  </div>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Latest Repair Details */}
+        <div
+          style={{
+            background: "white",
+            borderRadius: "12px",
+            padding: "20px",
+            marginBottom: "20px",
+            border: "1px solid #e0e0e0",
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontSize: "0.85rem",
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "#888",
+              marginBottom: "12px",
+            }}
+          >
+            Latest Repair
+          </div>
+          <div
+            style={{
+              background: "#fafafa",
+              borderRadius: "8px",
+              padding: "14px",
+              borderLeft: "4px solid #c0392b",
+              color: "#424242",
+              lineHeight: 1.6,
+              fontSize: "0.95rem",
+              marginBottom: "12px",
+            }}
+          >
+            {customerData.problemDescription}
+          </div>
+          {customerData.mechanicNotes && (
+            <div>
+              <div style={{ ...labelStyle, marginBottom: "6px" }}>
+                <FaWrench style={{ color: "#00b894" }} /> Mechanic Notes
+              </div>
+              <div
+                style={{
+                  background: "#e8f8f5",
+                  borderRadius: "8px",
+                  padding: "12px",
+                  borderLeft: "4px solid #00b894",
+                  color: "#424242",
+                  lineHeight: 1.6,
+                  fontSize: "0.9rem",
+                }}
+              >
+                {customerData.mechanicNotes}
+              </div>
+            </div>
+          )}
+          <div
+            style={{
+              marginTop: "12px",
+              fontSize: "0.8rem",
+              color: "#aaa",
+              display: "flex",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "8px",
+            }}
+          >
+            <span>Submitted: {formatDate(customerData.createdAt)}</span>
+            <span>
+              Updated:{" "}
+              {formatDate(customerData.updatedAt || customerData.createdAt)}
+            </span>
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() =>
+              onAddRepair({
+                registrationNumber: customerData.registrationNumber,
+                customerName: customerData.customerName,
+                phoneNumber: customerData.phoneNumber,
+                carModel: customerData.carModel,
+              })
+            }
+            style={{
+              flex: 1,
+              minWidth: "180px",
+              padding: "14px 20px",
+              background: "linear-gradient(135deg,#c0392b,#96281b)",
+              color: "white",
+              border: "none",
+              borderRadius: "50px",
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontWeight: 700,
+              fontSize: "0.95rem",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+              boxShadow: "0 4px 16px rgba(192,57,43,0.3)",
+            }}
+          >
+            <FaPlus /> Add New Repair
+          </button>
+          <button
+            type="button"
+            onClick={onBack}
+            style={{
+              padding: "14px 20px",
+              background: "white",
+              color: "#555",
+              border: "2px solid #e0e0e0",
+              borderRadius: "50px",
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontWeight: 700,
+              fontSize: "0.95rem",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+            }}
+          >
+            <FaArrowLeft /> Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ animation: "fadeUp 0.4s ease both" }}>
+      <div
+        style={{
+          background: "#f0f6ff",
+          border: "1px solid #c3d9f0",
+          borderRadius: "10px",
+          padding: "16px",
+          marginBottom: "24px",
+          display: "flex",
+          gap: "10px",
+          alignItems: "flex-start",
+        }}
+      >
+        <FaInfoCircle
+          style={{ color: "#0984e3", marginTop: "2px", flexShrink: 0 }}
+        />
+        <p style={{ fontSize: "0.9rem", color: "#1a4f7a", lineHeight: 1.5 }}>
+          Enter your <strong>vehicle registration</strong> and{" "}
+          <strong>phone number</strong> to view your repair history and add new
+          issues.
+        </p>
+      </div>
+
+      <form onSubmit={handleLookup}>
+        <div style={{ display: "grid", gap: "16px", marginBottom: "20px" }}>
+          <div>
+            <label style={labelStyle}>
+              <FaCar /> Registration Number
+            </label>
+            <input
+              type="text"
+              value={regNumber}
+              onChange={(e) => setRegNumber(e.target.value.toUpperCase())}
+              placeholder="e.g., KCA 123A"
+              style={inputStyle}
+              maxLength={20}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>
+              <FaPhone /> Phone Number
+            </label>
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="0700 000 000"
+              style={inputStyle}
+            />
+          </div>
+        </div>
+
+        {lookupError && (
+          <div
+            style={{
+              background: "#fff5f5",
+              border: "1px solid #feb2b2",
+              color: "#c0392b",
+              padding: "12px 16px",
+              borderRadius: "8px",
+              marginBottom: "16px",
+              display: "flex",
+              gap: "8px",
+              alignItems: "center",
+              fontSize: "0.9rem",
+            }}
+          >
+            <FaExclamationTriangle style={{ flexShrink: 0 }} />
+            {lookupError}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={looking}
+          style={{
+            width: "100%",
+            padding: "14px",
+            background: looking
+              ? "#ccc"
+              : "linear-gradient(135deg,#1a1a2e,#16213e)",
+            color: "white",
+            border: "none",
+            borderRadius: "50px",
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontWeight: 700,
+            fontSize: "1rem",
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            cursor: looking ? "not-allowed" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "10px",
+          }}
+        >
+          {looking ? (
+            <>
+              <FaSyncAlt style={{ animation: "spin 1s linear infinite" }} />
+              Looking Up...
+            </>
+          ) : (
+            <>
+              <FaSearch /> Find My Records
+            </>
+          )}
+        </button>
+      </form>
+    </div>
+  );
+};
+
+/* ─── Main Repair Form ────────────────────────────────────────────────────── */
+const RepairForm = ({
+  prefillData = {},
+  isExistingCustomer = false,
+  onSuccess,
+  onBack,
+}) => {
   const [formData, setFormData] = useState({
-    registrationNumber: "",
+    registrationNumber: prefillData.registrationNumber || "",
     problemDescription: "",
-    customerName: "",
-    phoneNumber: "",
-    carModel: "",
+    customerName: prefillData.customerName || "",
+    phoneNumber: prefillData.phoneNumber || "",
+    carModel: prefillData.carModel || "",
     multimedia: [],
   });
-  const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [showCaptureModal, setShowCaptureModal] = useState(false);
@@ -49,30 +650,23 @@ const CustomerForm = () => {
   const streamRef = useRef(null);
   const recordingIntervalRef = useRef(null);
 
-  // Constants for limits - ADJUSTED FOR FREE TIER
   const MAX_FILES = 3;
-  const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
-  const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB
-  const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB
-  const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB total
+  const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+  const MAX_VIDEO_SIZE = 10 * 1024 * 1024;
+  const MAX_TOTAL_SIZE = 10 * 1024 * 1024;
 
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
-  };
-
-  // Calculate total file size whenever multimedia changes
   useEffect(() => {
-    const size = formData.multimedia.reduce((acc, file) => acc + file.size, 0);
+    const size = formData.multimedia.reduce((acc, f) => acc + f.size, 0);
     setTotalSize(size);
   }, [formData.multimedia]);
 
-  // Cleanup function for media streams
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
   const cleanupMediaStream = () => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
     if (recordingIntervalRef.current) {
@@ -81,119 +675,70 @@ const CustomerForm = () => {
     }
   };
 
-  // Open camera for photo/video capture
   const startCapture = async (type) => {
     setError(null);
     setCaptureType(type);
     setShowCaptureModal(true);
-
     try {
       const constraints = {
         video: type === "photo" || type === "video",
-        audio: type === "video" || type === "audio",
+        audio: type === "video",
       };
-
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
-
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
       }
-
-      if (type === "audio" || type === "video") {
-        // For audio/video recording
-        const options =
-          type === "audio"
-            ? { mimeType: "audio/webm" }
-            : { mimeType: "video/webm" };
-
+      if (type === "video") {
         try {
-          mediaRecorderRef.current = new MediaRecorder(stream, options);
-        } catch (e) {
-          // Fallback to default
+          mediaRecorderRef.current = new MediaRecorder(stream, {
+            mimeType: "video/webm",
+          });
+        } catch {
           mediaRecorderRef.current = new MediaRecorder(stream);
         }
-
-        setupMediaRecorder();
+        setupMediaRecorder("video");
       }
-    } catch (error) {
-      console.error("Error accessing media devices:", error);
-      setError("Unable to access camera/microphone. Please check permissions.");
+    } catch (err) {
+      setError("Unable to access camera. Please check permissions.");
       setShowCaptureModal(false);
     }
   };
 
-  const setupMediaRecorder = () => {
+  const setupMediaRecorder = (type) => {
     const chunks = [];
-
     mediaRecorderRef.current.ondataavailable = (e) => {
-      if (e.data.size > 0) {
-        chunks.push(e.data);
-      }
+      if (e.data.size > 0) chunks.push(e.data);
     };
-
     mediaRecorderRef.current.onstop = () => {
-      const blob = new Blob(chunks, {
-        type: captureType === "video" ? "video/webm" : "audio/webm",
-      });
-
-      // Check file size before adding
-      const newTotalSize = totalSize + blob.size;
-
-      // Check based on type
-      const maxSize = captureType === "video" ? MAX_VIDEO_SIZE : MAX_AUDIO_SIZE;
-
-      if (newTotalSize > MAX_TOTAL_SIZE) {
-        setError(
-          `Recording would exceed total 10MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(2)}MB, Added: ${(blob.size / (1024 * 1024)).toFixed(2)}MB`,
-        );
-        stopCapture();
-        return;
-      }
-
-      if (blob.size > maxSize) {
-        setError(
-          `Recording exceeds ${maxSize / (1024 * 1024)}MB limit (${(blob.size / (1024 * 1024)).toFixed(2)}MB)`,
-        );
-        stopCapture();
-        return;
-      }
-
-      // Check total files limit
+      const blob = new Blob(chunks, { type: "video/webm" });
       if (formData.multimedia.length >= MAX_FILES) {
-        setError(`Maximum ${MAX_FILES} files allowed`);
+        setError(`Max ${MAX_FILES} files allowed`);
         stopCapture();
         return;
       }
-
-      const file = new File(
-        [blob],
-        `${captureType}_${Date.now()}.${captureType === "video" ? "webm" : "webm"}`,
-        {
-          type: captureType === "video" ? "video/webm" : "audio/webm",
-        },
-      );
-
-      setFormData((prev) => ({
-        ...prev,
-        multimedia: [...prev.multimedia, file],
-      }));
-
+      if (blob.size > MAX_VIDEO_SIZE) {
+        setError(`Video exceeds 10MB limit`);
+        stopCapture();
+        return;
+      }
+      const file = new File([blob], `video_${Date.now()}.webm`, {
+        type: "video/webm",
+      });
+      setFormData((p) => ({ ...p, multimedia: [...p.multimedia, file] }));
       stopCapture();
     };
   };
 
   const startRecording = () => {
     if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.start(1000); // Collect data every second
+      mediaRecorderRef.current.start(1000);
       setIsRecording(true);
-
-      // Start timer
-      let seconds = 0;
+      let s = 0;
       recordingIntervalRef.current = setInterval(() => {
-        seconds++;
-        setRecordingTime(seconds);
+        s++;
+        setRecordingTime(s);
       }, 1000);
     }
   };
@@ -208,52 +753,33 @@ const CustomerForm = () => {
   };
 
   const takePhoto = () => {
-    if (videoRef.current) {
-      const canvas = document.createElement("canvas");
-      canvas.width = videoRef.current.videoWidth;
-      canvas.height = videoRef.current.videoHeight;
-      canvas.getContext("2d").drawImage(videoRef.current, 0, 0);
-
-      canvas.toBlob(
-        (blob) => {
-          // Check file size
-          const newTotalSize = totalSize + blob.size;
-          if (newTotalSize > MAX_TOTAL_SIZE) {
-            setError(
-              `Photo would exceed total 10MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(2)}MB, Added: ${(blob.size / (1024 * 1024)).toFixed(2)}MB`,
-            );
-            stopCapture();
-            return;
-          }
-
-          if (blob.size > MAX_IMAGE_SIZE) {
-            setError(
-              `Photo exceeds 5MB limit (${(blob.size / (1024 * 1024)).toFixed(2)}MB)`,
-            );
-            stopCapture();
-            return;
-          }
-
-          // Check total files limit
-          if (formData.multimedia.length >= MAX_FILES) {
-            setError(`Maximum ${MAX_FILES} files allowed`);
-            stopCapture();
-            return;
-          }
-
-          const file = new File([blob], `photo_${Date.now()}.jpg`, {
-            type: "image/jpeg",
-          });
-          setFormData((prev) => ({
-            ...prev,
-            multimedia: [...prev.multimedia, file],
-          }));
+    if (!videoRef.current) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    canvas.getContext("2d").drawImage(videoRef.current, 0, 0);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        if (formData.multimedia.length >= MAX_FILES) {
+          setError(`Max ${MAX_FILES} files`);
           stopCapture();
-        },
-        "image/jpeg",
-        0.7, // Reduced quality to save space
-      );
-    }
+          return;
+        }
+        if (blob.size > MAX_IMAGE_SIZE) {
+          setError(`Photo exceeds 5MB`);
+          stopCapture();
+          return;
+        }
+        const file = new File([blob], `photo_${Date.now()}.jpg`, {
+          type: "image/jpeg",
+        });
+        setFormData((p) => ({ ...p, multimedia: [...p.multimedia, file] }));
+        stopCapture();
+      },
+      "image/jpeg",
+      0.75,
+    );
   };
 
   const stopCapture = () => {
@@ -267,945 +793,629 @@ const CustomerForm = () => {
   const handleFileUpload = (e) => {
     const files = Array.from(e.target.files);
     const errors = [];
-    const validFiles = [];
-
-    // Check total files limit
+    const valid = [];
     if (formData.multimedia.length + files.length > MAX_FILES) {
       setError(
-        `Maximum ${MAX_FILES} files allowed. You have ${formData.multimedia.length} file(s) already.`,
+        `Max ${MAX_FILES} files. You have ${formData.multimedia.length} already.`,
       );
       return;
     }
-
-    // Calculate new total size
-    let newTotalSize = totalSize;
-    files.forEach((file) => {
-      newTotalSize += file.size;
+    files.forEach((f) => {
+      const v = isValidMediaFile(f);
+      if (v.valid) valid.push(f);
+      else errors.push(v.error);
     });
-
-    if (newTotalSize > MAX_TOTAL_SIZE) {
-      setError(
-        `Total file size would exceed 10MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(2)}MB, Added: ${((newTotalSize - totalSize) / (1024 * 1024)).toFixed(2)}MB`,
-      );
-      return;
-    }
-
-    files.forEach((file) => {
-      const validation = isValidMediaFile(file);
-
-      if (validation.valid) {
-        validFiles.push(file);
-      } else {
-        errors.push(validation.error);
-      }
-    });
-
-    if (errors.length > 0) {
+    if (errors.length) {
       setFileErrors(errors);
       setTimeout(() => setFileErrors([]), 5000);
     }
-
-    if (validFiles.length > 0) {
-      setFormData((prev) => ({
-        ...prev,
-        multimedia: [...prev.multimedia, ...validFiles],
-      }));
-    }
-
-    // Clear input
+    if (valid.length)
+      setFormData((p) => ({ ...p, multimedia: [...p.multimedia, ...valid] }));
     e.target.value = "";
   };
 
-  const removeFile = (index) => {
-    setFormData((prev) => ({
-      ...prev,
-      multimedia: prev.multimedia.filter((_, i) => i !== index),
+  const removeFile = (idx) => {
+    setFormData((p) => ({
+      ...p,
+      multimedia: p.multimedia.filter((_, i) => i !== idx),
     }));
   };
 
   const handleDrag = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
-    }
+    setDragActive(e.type === "dragenter" || e.type === "dragover");
   };
 
   const handleDrop = (e) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-
     const files = Array.from(e.dataTransfer.files);
-
-    // Check total files limit
     if (formData.multimedia.length + files.length > MAX_FILES) {
-      setError(
-        `Maximum ${MAX_FILES} files allowed. You have ${formData.multimedia.length} file(s) already.`,
-      );
+      setError(`Max ${MAX_FILES} files.`);
       return;
     }
-
-    // Calculate new total size
-    let newTotalSize = totalSize;
-    files.forEach((file) => {
-      newTotalSize += file.size;
-    });
-
-    if (newTotalSize > MAX_TOTAL_SIZE) {
-      setError(
-        `Total file size would exceed 10MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`,
-      );
-      return;
-    }
-
-    const validFiles = [];
-    files.forEach((file) => {
-      const validation = isValidMediaFile(file);
-      if (validation.valid) {
-        validFiles.push(file);
-      }
-    });
-
-    if (validFiles.length > 0) {
-      setFormData((prev) => ({
-        ...prev,
-        multimedia: [...prev.multimedia, ...validFiles],
-      }));
-    }
+    const valid = files.filter((f) => isValidMediaFile(f).valid);
+    if (valid.length)
+      setFormData((p) => ({ ...p, multimedia: [...p.multimedia, ...valid] }));
   };
 
-  const getFileIcon = (file) => {
-    if (file.type.startsWith("image/")) return <FaImage />;
-    if (file.type.startsWith("video/")) return <FaVideo />;
-    if (file.type.startsWith("audio/")) return <FaMicrophone />;
-    return <FaCloudUploadAlt />;
-  };
-
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-  };
+  const formatTime = (s) =>
+    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     setUploadProgress(0);
-
     try {
-      // Validate required fields
-      if (!formData.registrationNumber || !formData.problemDescription) {
+      if (!formData.registrationNumber || !formData.problemDescription)
         throw new Error(
           "Registration number and problem description are required",
         );
-      }
-
-      // Validate registration number format (basic)
-      if (formData.registrationNumber.length < 3) {
+      if (formData.registrationNumber.length < 3)
         throw new Error("Registration number must be at least 3 characters");
-      }
-
-      // Validate phone number if provided
-      if (formData.phoneNumber && formData.phoneNumber.length < 10) {
+      if (formData.phoneNumber && formData.phoneNumber.length < 10)
         throw new Error("Please enter a valid phone number");
-      }
+      if (totalSize > MAX_TOTAL_SIZE)
+        throw new Error(`Total file size exceeds 10MB`);
 
-      // Validate total file size
-      if (totalSize > MAX_TOTAL_SIZE) {
-        throw new Error(
-          `Total file size exceeds 10MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`,
-        );
-      }
-
-      console.log("Submitting form data:", formData);
-
-      // Simulate upload progress
-      const progressInterval = setInterval(() => {
-        setUploadProgress((prev) => {
-          if (prev >= 90) {
-            clearInterval(progressInterval);
-            return 90;
+      const interval = setInterval(() => {
+        setUploadProgress((p) => {
+          if (p >= 88) {
+            clearInterval(interval);
+            return 88;
           }
-          return prev + 10;
+          return p + 8;
         });
-      }, 500);
+      }, 400);
 
       await submitRepairRequest(formData);
-
-      clearInterval(progressInterval);
+      clearInterval(interval);
       setUploadProgress(100);
-
-      console.log("Submission successful");
-
-      setSubmitted(true);
-      setFormData({
-        registrationNumber: "",
-        problemDescription: "",
-        customerName: "",
-        phoneNumber: "",
-        carModel: "",
-        multimedia: [],
-      });
-      setTotalSize(0);
-
-      setTimeout(() => setUploadProgress(0), 1000);
-    } catch (error) {
-      console.error("Error submitting request:", error);
-      setError(error.message || "Error submitting request. Please try again.");
+      onSuccess && onSuccess(formData.registrationNumber);
+    } catch (err) {
+      setError(err.message || "Error submitting. Please try again.");
       setUploadProgress(0);
     } finally {
       setLoading(false);
     }
   };
 
-  if (submitted) {
-    return (
-      <div className="container">
-        <Header />
-        <div
-          className="glass-effect"
+  const hasFiles = formData.multimedia.length > 0;
+
+  return (
+    <form onSubmit={handleSubmit}>
+      {isExistingCustomer && onBack && (
+        <button
+          type="button"
+          onClick={onBack}
           style={{
-            padding: "30px 20px",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            background: "none",
+            border: "none",
+            color: "#888",
+            cursor: "pointer",
+            fontSize: "0.85rem",
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontWeight: 600,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            marginBottom: "20px",
+            padding: "0",
+          }}
+        >
+          <FaArrowLeft /> Back to Profile
+        </button>
+      )}
+
+      {isExistingCustomer && (
+        <div
+          style={{
+            background: "#e8f8f5",
+            border: "1px solid rgba(0,184,148,0.3)",
+            borderRadius: "10px",
+            padding: "14px 16px",
+            marginBottom: "20px",
+            display: "flex",
+            gap: "8px",
+            alignItems: "center",
+            fontSize: "0.9rem",
+            color: "#00695c",
+          }}
+        >
+          <FaCheckCircle style={{ color: "#00b894", flexShrink: 0 }} />
+          Customer verified — adding a new repair to your existing record.
+        </div>
+      )}
+
+      {error && (
+        <div
+          style={{
+            background: "#fff5f5",
+            border: "1px solid #feb2b2",
+            color: "#c0392b",
+            padding: "12px 16px",
+            borderRadius: "10px",
+            marginBottom: "20px",
+            display: "flex",
+            gap: "8px",
+            alignItems: "center",
+            fontSize: "0.9rem",
+          }}
+        >
+          <FaExclamationTriangle style={{ flexShrink: 0 }} />
+          {error}
+        </div>
+      )}
+
+      {fileErrors.length > 0 && (
+        <div
+          style={{
+            background: "#fff8f0",
+            border: "1px solid #f5cba7",
+            color: "#a04000",
+            padding: "12px 16px",
+            borderRadius: "10px",
+            marginBottom: "16px",
+            fontSize: "0.88rem",
+          }}
+        >
+          {fileErrors.map((e, i) => (
+            <div key={i}>• {e}</div>
+          ))}
+        </div>
+      )}
+
+      {/* Upload Progress */}
+      {loading && (
+        <div
+          style={{
+            background: "linear-gradient(135deg,#1a1a2e,#16213e)",
+            borderRadius: "12px",
+            padding: "20px",
+            marginBottom: "20px",
+            color: "white",
             textAlign: "center",
-            margin: "20px auto",
-            maxWidth: "600px",
-            width: "90%",
           }}
         >
           <div
             style={{
-              width: "60px",
-              height: "60px",
-              backgroundColor: "#009688",
-              borderRadius: "50%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              margin: "0 auto 20px",
-              color: "white",
-              fontSize: "28px",
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontSize: "1.1rem",
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              marginBottom: "12px",
             }}
           >
-            ✓
+            ⏳ Please be patient as we check and verify the uploaded files…
           </div>
-          <h2
-            style={{
-              color: "#00695c",
-              marginBottom: "15px",
-              fontSize: "1.5rem",
-            }}
-          >
-            Request Submitted Successfully!
-          </h2>
-          <p
-            style={{
-              color: "var(--neutral-dark)",
-              marginBottom: "25px",
-              lineHeight: "1.6",
-            }}
-          >
-            Your repair request has been received. Our mechanics will contact
-            you shortly.
-          </p>
-          <button
-            className="btn-primary"
-            onClick={() => setSubmitted(false)}
-            style={{
-              padding: "12px 30px",
-              fontSize: "1rem",
-              width: "100%",
-              maxWidth: "300px",
-            }}
-          >
-            Submit Another Request
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="container">
-      <Header />
-      <div
-        className="glass-effect"
-        style={{
-          padding: "25px 15px",
-          maxWidth: "800px",
-          margin: "20px auto",
-          width: "90%",
-        }}
-      >
-        <div style={{ textAlign: "center", marginBottom: "30px" }}>
           <div
             style={{
-              width: "60px",
-              height: "60px",
-              backgroundColor: "var(--accent-red)",
-              borderRadius: "50%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              margin: "0 auto 15px",
-              color: "white",
-              fontSize: "24px",
-            }}
-          >
-            <FaCar />
-          </div>
-          <h2
-            style={{
-              color: "#00695c",
-              fontSize: "1.5rem",
-              marginBottom: "8px",
-            }}
-          >
-            Car Repair Request Form
-          </h2>
-          <p style={{ color: "var(--neutral-dark)", fontSize: "0.95rem" }}>
-            Fill in the details below and our team will assist you promptly
-          </p>
-        </div>
-
-        {error && (
-          <div
-            style={{
-              backgroundColor: "#ffebee",
-              color: "#d32f2f",
-              padding: "12px",
-              borderRadius: "8px",
-              marginBottom: "20px",
-              border: "1px solid #ffcdd2",
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-            }}
-          >
-            <FaExclamationTriangle />
-            {error}
-          </div>
-        )}
-
-        {fileErrors.length > 0 && (
-          <div
-            style={{
-              backgroundColor: "#fff3e0",
-              color: "#e65100",
-              padding: "12px",
-              borderRadius: "8px",
-              marginBottom: "20px",
-              border: "1px solid #ffe0b2",
-            }}
-          >
-            {fileErrors.map((err, idx) => (
-              <div key={idx}>• {err}</div>
-            ))}
-          </div>
-        )}
-
-        {uploadProgress > 0 && uploadProgress < 100 && (
-          <div
-            style={{
-              marginBottom: "20px",
-              backgroundColor: "#e0f2f1",
-              borderRadius: "10px",
+              height: "6px",
+              background: "rgba(255,255,255,0.15)",
+              borderRadius: "3px",
               overflow: "hidden",
             }}
           >
             <div
               style={{
-                height: "4px",
-                backgroundColor: "#009688",
+                height: "100%",
                 width: `${uploadProgress}%`,
-                transition: "width 0.3s ease",
+                background: "linear-gradient(90deg,#c0392b,#f39c12)",
+                borderRadius: "3px",
+                transition: "width 0.4s ease",
               }}
             />
-            <p
-              style={{
-                textAlign: "center",
-                padding: "8px",
-                fontSize: "0.9rem",
-              }}
-            >
-              Uploading... {uploadProgress}%
-            </p>
           </div>
-        )}
+          <div style={{ marginTop: "8px", fontSize: "0.85rem", opacity: 0.7 }}>
+            {uploadProgress}% complete
+          </div>
+        </div>
+      )}
 
-        <form onSubmit={handleSubmit}>
+      {/* Form Fields */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "16px",
+          marginBottom: "16px",
+        }}
+      >
+        <div style={{ gridColumn: "1/-1" }}>
+          <label style={labelStyle}>
+            <FaCar /> Registration Number *
+          </label>
+          <input
+            type="text"
+            name="registrationNumber"
+            value={formData.registrationNumber}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                registrationNumber: e.target.value.toUpperCase(),
+              })
+            }
+            required
+            style={{
+              ...inputStyle,
+              ...(isExistingCustomer
+                ? {
+                    background: "#f0f2f5",
+                    color: "#888",
+                    cursor: "not-allowed",
+                  }
+                : {}),
+            }}
+            placeholder="e.g., KCA 123A"
+            maxLength={20}
+            readOnly={isExistingCustomer}
+          />
+        </div>
+
+        <div>
+          <label style={labelStyle}>
+            <FaUser /> Customer Name
+          </label>
+          <input
+            type="text"
+            name="customerName"
+            value={formData.customerName}
+            onChange={handleChange}
+            style={{
+              ...inputStyle,
+              ...(isExistingCustomer
+                ? {
+                    background: "#f0f2f5",
+                    color: "#888",
+                    cursor: "not-allowed",
+                  }
+                : {}),
+            }}
+            placeholder="Full name"
+            readOnly={isExistingCustomer}
+          />
+        </div>
+
+        <div>
+          <label style={labelStyle}>
+            <FaPhone /> Phone Number
+          </label>
+          <input
+            type="tel"
+            name="phoneNumber"
+            value={formData.phoneNumber}
+            onChange={handleChange}
+            style={{
+              ...inputStyle,
+              ...(isExistingCustomer
+                ? {
+                    background: "#f0f2f5",
+                    color: "#888",
+                    cursor: "not-allowed",
+                  }
+                : {}),
+            }}
+            placeholder="0700 000 000"
+            readOnly={isExistingCustomer}
+          />
+        </div>
+
+        <div style={{ gridColumn: "1/-1" }}>
+          <label style={labelStyle}>Car Model</label>
+          <input
+            type="text"
+            name="carModel"
+            value={formData.carModel}
+            onChange={handleChange}
+            style={inputStyle}
+            placeholder="e.g., Toyota Hilux 2019"
+          />
+        </div>
+
+        <div style={{ gridColumn: "1/-1" }}>
+          <label style={labelStyle}>
+            <FaWrench /> Problem Description *
+          </label>
+          <textarea
+            name="problemDescription"
+            value={formData.problemDescription}
+            onChange={handleChange}
+            required
+            rows={4}
+            style={{ ...inputStyle, resize: "vertical", minHeight: "110px" }}
+            placeholder="Describe the problem in detail (sounds, symptoms, when it started)..."
+          />
+        </div>
+      </div>
+
+      {/* Media Upload Section */}
+      <div
+        style={{
+          background: "#fafafa",
+          border: "1px solid #e0e0e0",
+          borderRadius: "12px",
+          padding: "20px",
+          marginBottom: "24px",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "14px",
+          }}
+        >
+          <label style={{ ...labelStyle, marginBottom: 0 }}>
+            <FaCloudUploadAlt /> Photos & Videos
+          </label>
+          <span
+            style={{
+              fontSize: "0.8rem",
+              color:
+                formData.multimedia.length >= MAX_FILES ? "#c0392b" : "#888",
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontWeight: 600,
+            }}
+          >
+            {formData.multimedia.length}/{MAX_FILES} ·{" "}
+            {(totalSize / 1024 / 1024).toFixed(1)}MB / 10MB
+          </span>
+        </div>
+
+        {/* Capture Buttons */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "10px",
+            marginBottom: "14px",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => startCapture("photo")}
+            disabled={formData.multimedia.length >= MAX_FILES}
+            style={{
+              padding: "12px",
+              background:
+                formData.multimedia.length >= MAX_FILES
+                  ? "#e0e0e0"
+                  : "linear-gradient(135deg,#0984e3,#0652dd)",
+              color: formData.multimedia.length >= MAX_FILES ? "#aaa" : "white",
+              border: "none",
+              borderRadius: "10px",
+              cursor:
+                formData.multimedia.length >= MAX_FILES
+                  ? "not-allowed"
+                  : "pointer",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "6px",
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontWeight: 700,
+              fontSize: "0.85rem",
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              transition: "all 0.2s",
+            }}
+          >
+            <FaCamera size={20} />
+            Take Photo
+          </button>
+          <button
+            type="button"
+            onClick={() => startCapture("video")}
+            disabled={formData.multimedia.length >= MAX_FILES}
+            style={{
+              padding: "12px",
+              background:
+                formData.multimedia.length >= MAX_FILES
+                  ? "#e0e0e0"
+                  : "linear-gradient(135deg,#c0392b,#96281b)",
+              color: formData.multimedia.length >= MAX_FILES ? "#aaa" : "white",
+              border: "none",
+              borderRadius: "10px",
+              cursor:
+                formData.multimedia.length >= MAX_FILES
+                  ? "not-allowed"
+                  : "pointer",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "6px",
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontWeight: 700,
+              fontSize: "0.85rem",
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              transition: "all 0.2s",
+            }}
+          >
+            <FaVideo size={20} />
+            Record Video
+          </button>
+        </div>
+
+        {/* Drag & Drop */}
+        <div
+          onDragEnter={handleDrag}
+          onDragLeave={handleDrag}
+          onDragOver={handleDrag}
+          onDrop={handleDrop}
+          onClick={() =>
+            formData.multimedia.length < MAX_FILES &&
+            fileInputRef.current?.click()
+          }
+          style={{
+            border: `2px dashed ${dragActive ? "#c0392b" : "#ccc"}`,
+            borderRadius: "10px",
+            padding: "18px",
+            textAlign: "center",
+            background: dragActive ? "rgba(192,57,43,0.04)" : "white",
+            cursor:
+              formData.multimedia.length >= MAX_FILES
+                ? "not-allowed"
+                : "pointer",
+            transition: "all 0.2s",
+            opacity: formData.multimedia.length >= MAX_FILES ? 0.5 : 1,
+          }}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,video/*"
+            onChange={handleFileUpload}
+            style={{ display: "none" }}
+            disabled={formData.multimedia.length >= MAX_FILES}
+          />
+          <FaCloudUploadAlt
+            style={{ fontSize: "28px", color: "#c0392b", marginBottom: "8px" }}
+          />
+          <p style={{ color: "#555", fontSize: "0.9rem", marginBottom: "4px" }}>
+            {formData.multimedia.length >= MAX_FILES
+              ? "Maximum files reached"
+              : "Drop files here or click to upload"}
+          </p>
+          <p style={{ color: "#aaa", fontSize: "0.78rem" }}>
+            Images (5MB), Videos (10MB)
+          </p>
+        </div>
+
+        {/* File Previews */}
+        {hasFiles && (
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr",
-              gap: "20px",
-              marginBottom: "30px",
+              gridTemplateColumns: "repeat(3, 1fr)",
+              gap: "10px",
+              marginTop: "14px",
             }}
           >
-            {/* Form Fields */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr",
-                gap: "20px",
-              }}
-            >
-              {/* Registration Number */}
-              <div>
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    marginBottom: "8px",
-                    color: "#00695c",
-                    fontSize: "0.95rem",
-                  }}
-                >
-                  <FaCar /> Registration Number *
-                </label>
-                <input
-                  type="text"
-                  name="registrationNumber"
-                  value={formData.registrationNumber}
-                  onChange={handleChange}
-                  required
-                  style={{
-                    width: "100%",
-                    padding: "14px 12px",
-                    border: "2px solid #b2dfdb",
-                    borderRadius: "10px",
-                    fontSize: "16px",
-                    boxSizing: "border-box",
-                  }}
-                  placeholder="e.g., KCA 123A"
-                  maxLength="20"
-                />
-              </div>
-
-              {/* Customer Name */}
-              <div>
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    marginBottom: "8px",
-                    color: "#00695c",
-                    fontSize: "0.95rem",
-                  }}
-                >
-                  <FaUser /> Customer Name
-                </label>
-                <input
-                  type="text"
-                  name="customerName"
-                  value={formData.customerName}
-                  onChange={handleChange}
-                  style={{
-                    width: "100%",
-                    padding: "14px 12px",
-                    border: "2px solid #b2dfdb",
-                    borderRadius: "10px",
-                    fontSize: "16px",
-                    boxSizing: "border-box",
-                  }}
-                  placeholder="Your full name"
-                />
-              </div>
-
-              {/* Phone Number */}
-              <div>
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    marginBottom: "8px",
-                    color: "#00695c",
-                    fontSize: "0.95rem",
-                  }}
-                >
-                  <FaPhone /> Phone Number
-                </label>
-                <input
-                  type="tel"
-                  name="phoneNumber"
-                  value={formData.phoneNumber}
-                  onChange={handleChange}
-                  style={{
-                    width: "100%",
-                    padding: "14px 12px",
-                    border: "2px solid #b2dfdb",
-                    borderRadius: "10px",
-                    fontSize: "16px",
-                    boxSizing: "border-box",
-                  }}
-                  placeholder="0700 000 000"
-                />
-              </div>
-
-              {/* Car Model */}
-              <div>
-                <label
-                  style={{
-                    marginBottom: "8px",
-                    display: "block",
-                    color: "#00695c",
-                    fontSize: "0.95rem",
-                  }}
-                >
-                  Car Model
-                </label>
-                <input
-                  type="text"
-                  name="carModel"
-                  value={formData.carModel}
-                  onChange={handleChange}
-                  style={{
-                    width: "100%",
-                    padding: "14px 12px",
-                    border: "2px solid #b2dfdb",
-                    borderRadius: "10px",
-                    fontSize: "16px",
-                    boxSizing: "border-box",
-                  }}
-                  placeholder="e.g., Toyota Hilux"
-                />
-              </div>
-
-              {/* Problem Description */}
-              <div style={{ gridColumn: "1/-1" }}>
-                <label
-                  style={{
-                    marginBottom: "8px",
-                    display: "block",
-                    color: "#00695c",
-                    fontSize: "0.95rem",
-                  }}
-                >
-                  Problem Description *
-                </label>
-                <textarea
-                  name="problemDescription"
-                  value={formData.problemDescription}
-                  onChange={handleChange}
-                  required
-                  rows="4"
-                  style={{
-                    width: "100%",
-                    padding: "14px 12px",
-                    border: "2px solid #b2dfdb",
-                    borderRadius: "10px",
-                    fontSize: "16px",
-                    resize: "vertical",
-                    boxSizing: "border-box",
-                    minHeight: "120px",
-                  }}
-                  placeholder="Describe the problem in detail..."
-                />
-              </div>
-
-              {/* Capture Options */}
-              <div style={{ gridColumn: "1/-1" }}>
-                <label
-                  style={{
-                    marginBottom: "15px",
-                    display: "block",
-                    color: "#00695c",
-                    fontSize: "0.95rem",
-                  }}
-                >
-                  Add Photos, Videos, or Audio Recordings
-                  <span
+            {formData.multimedia.map((file, idx) => (
+              <div
+                key={idx}
+                style={{
+                  position: "relative",
+                  borderRadius: "8px",
+                  overflow: "hidden",
+                  aspectRatio: "1",
+                  background: "#f0f0f0",
+                  border: "1px solid #e0e0e0",
+                }}
+              >
+                {file.type.startsWith("image/") ? (
+                  <img
+                    src={URL.createObjectURL(file)}
+                    alt=""
                     style={{
-                      fontSize: "0.8rem",
-                      marginLeft: "10px",
-                      color: "#666",
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
                     }}
-                  >
-                    (Max {MAX_FILES} files, 10MB total - Images/Audio: 5MB max,
-                    Videos: 10MB max)
-                  </span>
-                </label>
-
-                {/* File count and size indicator */}
-                <div
-                  style={{
-                    marginBottom: "15px",
-                    padding: "10px",
-                    backgroundColor: "#e0f2f1",
-                    borderRadius: "8px",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    flexWrap: "wrap",
-                    gap: "10px",
-                  }}
-                >
+                  />
+                ) : (
                   <div
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "5px",
-                    }}
-                  >
-                    <FaInfoCircle style={{ color: "#009688" }} />
-                    <span style={{ fontSize: "0.9rem", color: "#00695c" }}>
-                      {formData.multimedia.length} / {MAX_FILES} files
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "0.9rem",
-                      color: totalSize > MAX_TOTAL_SIZE ? "#d32f2f" : "#00695c",
-                    }}
-                  >
-                    Total: {(totalSize / (1024 * 1024)).toFixed(2)}MB / 10MB
-                  </div>
-                </div>
-
-                {/* Capture Buttons */}
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(3, 1fr)",
-                    gap: "10px",
-                    marginBottom: "20px",
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => startCapture("photo")}
-                    disabled={
-                      formData.multimedia.length >= MAX_FILES ||
-                      totalSize >= MAX_TOTAL_SIZE
-                    }
-                    style={{
-                      background:
-                        formData.multimedia.length >= MAX_FILES ||
-                        totalSize >= MAX_TOTAL_SIZE
-                          ? "#ccc"
-                          : "linear-gradient(135deg, #2196f3 0%, #1976d2 100%)",
-                      color: "white",
-                      border: "none",
-                      padding: "15px 10px",
-                      borderRadius: "10px",
-                      fontWeight: "600",
-                      cursor:
-                        formData.multimedia.length >= MAX_FILES ||
-                        totalSize >= MAX_TOTAL_SIZE
-                          ? "not-allowed"
-                          : "pointer",
+                      width: "100%",
+                      height: "100%",
                       display: "flex",
                       flexDirection: "column",
                       alignItems: "center",
-                      gap: "5px",
-                      fontSize: "0.9rem",
-                      transition: "all 0.3s ease",
-                      opacity:
-                        formData.multimedia.length >= MAX_FILES ||
-                        totalSize >= MAX_TOTAL_SIZE
-                          ? 0.5
-                          : 1,
-                    }}
-                  >
-                    <FaCamera size={24} />
-                    <span>Take Photo</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => startCapture("video")}
-                    disabled={
-                      formData.multimedia.length >= MAX_FILES ||
-                      totalSize >= MAX_TOTAL_SIZE
-                    }
-                    style={{
-                      background:
-                        formData.multimedia.length >= MAX_FILES ||
-                        totalSize >= MAX_TOTAL_SIZE
-                          ? "#ccc"
-                          : "linear-gradient(135deg, #f44336 0%, #d32f2f 100%)",
-                      color: "white",
-                      border: "none",
-                      padding: "15px 10px",
-                      borderRadius: "10px",
-                      fontWeight: "600",
-                      cursor:
-                        formData.multimedia.length >= MAX_FILES ||
-                        totalSize >= MAX_TOTAL_SIZE
-                          ? "not-allowed"
-                          : "pointer",
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      gap: "5px",
-                      fontSize: "0.9rem",
-                      transition: "all 0.3s ease",
-                      opacity:
-                        formData.multimedia.length >= MAX_FILES ||
-                        totalSize >= MAX_TOTAL_SIZE
-                          ? 0.5
-                          : 1,
+                      justifyContent: "center",
+                      background: "#e8f4fd",
+                      color: "#0984e3",
                     }}
                   >
                     <FaVideo size={24} />
-                    <span>Record Video</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => startCapture("audio")}
-                    disabled={
-                      formData.multimedia.length >= MAX_FILES ||
-                      totalSize >= MAX_TOTAL_SIZE
-                    }
-                    style={{
-                      background:
-                        formData.multimedia.length >= MAX_FILES ||
-                        totalSize >= MAX_TOTAL_SIZE
-                          ? "#ccc"
-                          : "linear-gradient(135deg, #4caf50 0%, #388e3c 100%)",
-                      color: "white",
-                      border: "none",
-                      padding: "15px 10px",
-                      borderRadius: "10px",
-                      fontWeight: "600",
-                      cursor:
-                        formData.multimedia.length >= MAX_FILES ||
-                        totalSize >= MAX_TOTAL_SIZE
-                          ? "not-allowed"
-                          : "pointer",
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      gap: "5px",
-                      fontSize: "0.9rem",
-                      transition: "all 0.3s ease",
-                      opacity:
-                        formData.multimedia.length >= MAX_FILES ||
-                        totalSize >= MAX_TOTAL_SIZE
-                          ? 0.5
-                          : 1,
-                    }}
-                  >
-                    <FaMicrophone size={24} />
-                    <span>Record Audio</span>
-                  </button>
-                </div>
-
-                {/* Drag & Drop Zone */}
-                <div
-                  onDragEnter={handleDrag}
-                  onDragLeave={handleDrag}
-                  onDragOver={handleDrag}
-                  onDrop={handleDrop}
-                  onClick={() =>
-                    formData.multimedia.length < MAX_FILES &&
-                    totalSize < MAX_TOTAL_SIZE &&
-                    fileInputRef.current.click()
-                  }
-                  style={{
-                    border: `2px dashed ${dragActive ? "#009688" : "#b2dfdb"}`,
-                    borderRadius: "10px",
-                    padding: "20px",
-                    textAlign: "center",
-                    backgroundColor: dragActive
-                      ? "rgba(0, 150, 136, 0.05)"
-                      : "#f9f9f9",
-                    cursor:
-                      formData.multimedia.length >= MAX_FILES ||
-                      totalSize >= MAX_TOTAL_SIZE
-                        ? "not-allowed"
-                        : "pointer",
-                    transition: "all 0.3s ease",
-                    marginBottom: "15px",
-                    opacity:
-                      formData.multimedia.length >= MAX_FILES ||
-                      totalSize >= MAX_TOTAL_SIZE
-                        ? 0.5
-                        : 1,
-                  }}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    accept="image/*,video/*,audio/*"
-                    onChange={handleFileUpload}
-                    style={{ display: "none" }}
-                    disabled={
-                      formData.multimedia.length >= MAX_FILES ||
-                      totalSize >= MAX_TOTAL_SIZE
-                    }
-                  />
-                  <FaCloudUploadAlt
-                    style={{
-                      fontSize: "40px",
-                      color: "#009688",
-                      marginBottom: "10px",
-                    }}
-                  />
-                  <p
-                    style={{
-                      color: "#00695c",
-                      marginBottom: "5px",
-                      fontWeight: "500",
-                    }}
-                  >
-                    {formData.multimedia.length >= MAX_FILES ||
-                    totalSize >= MAX_TOTAL_SIZE
-                      ? "Maximum files/size reached"
-                      : "Or drag & drop files here"}
-                  </p>
-                  <p style={{ color: "#666", fontSize: "0.85rem" }}>
-                    Supports: Images (5MB), Videos (10MB), Audio (5MB)
-                  </p>
-                </div>
-
-                {/* File Preview Grid */}
-                {formData.multimedia.length > 0 && (
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "repeat(auto-fill, minmax(100px, 1fr))",
-                      gap: "10px",
-                      marginTop: "15px",
-                    }}
-                  >
-                    {formData.multimedia.map((file, index) => (
-                      <div
-                        key={index}
-                        style={{
-                          position: "relative",
-                          borderRadius: "8px",
-                          overflow: "hidden",
-                          backgroundColor: "#f0f0f0",
-                          aspectRatio: "1",
-                        }}
-                      >
-                        {file.type.startsWith("image/") ? (
-                          <img
-                            src={URL.createObjectURL(file)}
-                            alt="Preview"
-                            style={{
-                              width: "100%",
-                              height: "100%",
-                              objectFit: "cover",
-                            }}
-                          />
-                        ) : (
-                          <div
-                            style={{
-                              width: "100%",
-                              height: "100%",
-                              display: "flex",
-                              flexDirection: "column",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              backgroundColor: "#e0f2f1",
-                              color: "#009688",
-                              fontSize: "24px",
-                            }}
-                          >
-                            {getFileIcon(file)}
-                            <span
-                              style={{
-                                fontSize: "10px",
-                                marginTop: "5px",
-                                color: "#666",
-                              }}
-                            >
-                              {(file.size / (1024 * 1024)).toFixed(1)}MB
-                            </span>
-                          </div>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeFile(index);
-                          }}
-                          style={{
-                            position: "absolute",
-                            top: "5px",
-                            right: "5px",
-                            width: "24px",
-                            height: "24px",
-                            borderRadius: "50%",
-                            backgroundColor: "rgba(255, 255, 255, 0.9)",
-                            border: "none",
-                            color: "#d32f2f",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            cursor: "pointer",
-                            boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-                          }}
-                        >
-                          <FaTimes size={12} />
-                        </button>
-                      </div>
-                    ))}
+                    <span
+                      style={{
+                        fontSize: "10px",
+                        marginTop: "4px",
+                        color: "#666",
+                      }}
+                    >
+                      {(file.size / 1024 / 1024).toFixed(1)}MB
+                    </span>
                   </div>
                 )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeFile(idx);
+                  }}
+                  style={{
+                    position: "absolute",
+                    top: "4px",
+                    right: "4px",
+                    width: "22px",
+                    height: "22px",
+                    borderRadius: "50%",
+                    background: "rgba(192,57,43,0.9)",
+                    border: "none",
+                    color: "white",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <FaTimes size={10} />
+                </button>
               </div>
-            </div>
+            ))}
           </div>
-
-          <div style={{ textAlign: "center" }}>
-            <button
-              type="submit"
-              className="btn-primary"
-              disabled={loading || totalSize > MAX_TOTAL_SIZE}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "10px",
-                background:
-                  loading || totalSize > MAX_TOTAL_SIZE
-                    ? "#ccc"
-                    : "linear-gradient(135deg, #009688 0%, #00695c 100%)",
-                color: "white",
-                border: "none",
-                padding: "16px 30px",
-                borderRadius: "50px",
-                fontWeight: "600",
-                cursor:
-                  loading || totalSize > MAX_TOTAL_SIZE
-                    ? "not-allowed"
-                    : "pointer",
-                transition: "all 0.3s ease",
-                fontSize: "1rem",
-                width: "100%",
-                maxWidth: "400px",
-                opacity: loading || totalSize > MAX_TOTAL_SIZE ? 0.7 : 1,
-              }}
-            >
-              <FaPaperPlane />
-              {loading ? "Submitting..." : "Submit Repair Request"}
-            </button>
-          </div>
-        </form>
+        )}
       </div>
+
+      {/* Submit */}
+      <button
+        type="submit"
+        disabled={loading || totalSize > MAX_TOTAL_SIZE}
+        style={{
+          width: "100%",
+          padding: "16px",
+          background:
+            loading || totalSize > MAX_TOTAL_SIZE
+              ? "#ccc"
+              : "linear-gradient(135deg,#c0392b,#96281b)",
+          color: "white",
+          border: "none",
+          borderRadius: "50px",
+          fontFamily: "'Barlow Condensed', sans-serif",
+          fontWeight: 700,
+          fontSize: "1.1rem",
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          cursor:
+            loading || totalSize > MAX_TOTAL_SIZE ? "not-allowed" : "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "10px",
+          boxShadow: loading ? "none" : "0 4px 20px rgba(192,57,43,0.35)",
+          transition: "all 0.25s",
+        }}
+      >
+        <FaPaperPlane />
+        {loading ? "Please wait…" : "Submit Repair Request"}
+      </button>
 
       {/* Capture Modal */}
       {showCaptureModal && (
         <div
           style={{
             position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: "rgba(0,0,0,0.9)",
+            inset: 0,
+            background: "rgba(0,0,0,0.92)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -1215,11 +1425,11 @@ const CustomerForm = () => {
         >
           <div
             style={{
-              backgroundColor: "white",
-              borderRadius: "15px",
-              padding: "20px",
+              background: "white",
+              borderRadius: "16px",
+              padding: "24px",
               width: "100%",
-              maxWidth: "600px",
+              maxWidth: "560px",
             }}
           >
             <div
@@ -1227,20 +1437,25 @@ const CustomerForm = () => {
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
-                marginBottom: "15px",
+                marginBottom: "16px",
               }}
             >
-              <h3 style={{ color: "#00695c", margin: 0 }}>
-                {captureType === "photo" && "Take Photo"}
-                {captureType === "video" && "Record Video"}
-                {captureType === "audio" && "Record Audio"}
+              <h3
+                style={{
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontSize: "1.3rem",
+                  fontWeight: 700,
+                  color: "#1a1a2e",
+                }}
+              >
+                {captureType === "photo" ? "📷 Take Photo" : "🎬 Record Video"}
               </h3>
               <button
                 onClick={stopCapture}
                 style={{
                   background: "none",
                   border: "none",
-                  fontSize: "24px",
+                  fontSize: "22px",
                   cursor: "pointer",
                   color: "#666",
                 }}
@@ -1249,7 +1464,6 @@ const CustomerForm = () => {
               </button>
             </div>
 
-            {/* Video Element */}
             {(captureType === "photo" || captureType === "video") && (
               <video
                 ref={videoRef}
@@ -1259,49 +1473,39 @@ const CustomerForm = () => {
                 style={{
                   width: "100%",
                   borderRadius: "10px",
-                  backgroundColor: "#000",
-                  marginBottom: "15px",
+                  background: "#000",
+                  marginBottom: "16px",
+                  maxHeight: "300px",
+                  objectFit: "cover",
                 }}
               />
             )}
 
-            {/* Audio Recording UI */}
-            {captureType === "audio" && (
+            {isRecording && (
               <div
                 style={{
-                  height: "200px",
-                  backgroundColor: "#f0f0f0",
-                  borderRadius: "10px",
                   display: "flex",
-                  flexDirection: "column",
                   alignItems: "center",
-                  justifyContent: "center",
-                  marginBottom: "15px",
+                  gap: "8px",
+                  marginBottom: "12px",
+                  color: "#c0392b",
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontWeight: 700,
                 }}
               >
-                <FaMicrophone
+                <div
                   style={{
-                    fontSize: "60px",
-                    color: isRecording ? "#f44336" : "#009688",
-                    animation: isRecording ? "pulse 1s infinite" : "none",
+                    width: "10px",
+                    height: "10px",
+                    borderRadius: "50%",
+                    background: "#c0392b",
+                    animation: "pulse 1s infinite",
                   }}
                 />
-                {isRecording && (
-                  <div
-                    style={{
-                      marginTop: "15px",
-                      fontSize: "24px",
-                      fontWeight: "bold",
-                      color: "#00695c",
-                    }}
-                  >
-                    {formatTime(recordingTime)}
-                  </div>
-                )}
+                REC {formatTime(recordingTime)}
               </div>
             )}
 
-            {/* Controls */}
             <div
               style={{ display: "flex", gap: "10px", justifyContent: "center" }}
             >
@@ -1309,127 +1513,318 @@ const CustomerForm = () => {
                 <button
                   onClick={takePhoto}
                   style={{
-                    background: "#009688",
+                    background: "linear-gradient(135deg,#0984e3,#0652dd)",
                     color: "white",
                     border: "none",
-                    padding: "15px 30px",
+                    padding: "12px 28px",
                     borderRadius: "50px",
-                    fontWeight: "600",
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                    fontWeight: 700,
+                    fontSize: "1rem",
                     cursor: "pointer",
                     display: "flex",
                     alignItems: "center",
-                    gap: "10px",
-                    fontSize: "1rem",
+                    gap: "8px",
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
                   }}
                 >
-                  <FaCamera /> Take Photo
+                  <FaCamera /> Capture
                 </button>
               )}
-
-              {(captureType === "video" || captureType === "audio") && (
-                <>
-                  {!isRecording ? (
-                    <button
-                      onClick={startRecording}
-                      style={{
-                        background: "#f44336",
-                        color: "white",
-                        border: "none",
-                        padding: "15px 30px",
-                        borderRadius: "50px",
-                        fontWeight: "600",
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "10px",
-                        fontSize: "1rem",
-                      }}
-                    >
-                      <FaVideo /> Start Recording
-                    </button>
-                  ) : (
-                    <button
-                      onClick={stopRecording}
-                      style={{
-                        background: "#4caf50",
-                        color: "white",
-                        border: "none",
-                        padding: "15px 30px",
-                        borderRadius: "50px",
-                        fontWeight: "600",
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "10px",
-                        fontSize: "1rem",
-                      }}
-                    >
-                      <FaStop /> Stop Recording
-                    </button>
-                  )}
-                </>
-              )}
+              {captureType === "video" &&
+                (!isRecording ? (
+                  <button
+                    onClick={startRecording}
+                    style={{
+                      background: "linear-gradient(135deg,#c0392b,#96281b)",
+                      color: "white",
+                      border: "none",
+                      padding: "12px 28px",
+                      borderRadius: "50px",
+                      fontFamily: "'Barlow Condensed', sans-serif",
+                      fontWeight: 700,
+                      fontSize: "1rem",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      letterSpacing: "0.04em",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    <FaVideo /> Start Recording
+                  </button>
+                ) : (
+                  <button
+                    onClick={stopRecording}
+                    style={{
+                      background: "#27ae60",
+                      color: "white",
+                      border: "none",
+                      padding: "12px 28px",
+                      borderRadius: "50px",
+                      fontFamily: "'Barlow Condensed', sans-serif",
+                      fontWeight: 700,
+                      fontSize: "1rem",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      letterSpacing: "0.04em",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    <FaStop /> Stop & Save
+                  </button>
+                ))}
             </div>
           </div>
         </div>
       )}
+    </form>
+  );
+};
 
-      <style>
-        {`
-          @media (min-width: 768px) {
-            .glass-effect {
-              padding: 40px !important;
-            }
-            
-            form > div:first-child > div {
-              grid-template-columns: 1fr 1fr !important;
-              gap: 30px !important;
-            }
-            
-            h2 {
-              font-size: 2rem !important;
-            }
-            
-            .success-container {
-              padding: 50px 40px !important;
-            }
-            
-            .success-icon {
-              width: 80px !important;
-              height: 80px !important;
-              font-size: 36px !important;
-            }
-          }
-          
-          @media (min-width: 1024px) {
-            .glass-effect {
-              max-width: 800px !important;
-              margin: 40px auto !important;
-            }
-          }
-          
-          input, textarea {
-            font-size: 16px !important;
-          }
-          
-          input:focus, textarea:focus {
-            border-color: #009688 !important;
-            outline: none;
-            box-shadow: 0 0 0 3px rgba(0, 150, 136, 0.1) !important;
-          }
+/* ─── Success Screen ─────────────────────────────────────────────────────── */
+const SuccessScreen = ({ regNumber, onReset }) => (
+  <div
+    style={{
+      textAlign: "center",
+      padding: "20px 0",
+      animation: "fadeUp 0.4s ease both",
+    }}
+  >
+    <div
+      style={{
+        width: "80px",
+        height: "80px",
+        background: "linear-gradient(135deg,#27ae60,#1e8449)",
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        margin: "0 auto 20px",
+        boxShadow: "0 8px 24px rgba(39,174,96,0.35)",
+      }}
+    >
+      <FaCheckCircle style={{ fontSize: "36px", color: "white" }} />
+    </div>
+    <h2
+      style={{
+        fontFamily: "'Barlow Condensed', sans-serif",
+        fontSize: "1.8rem",
+        fontWeight: 800,
+        color: "#1a1a2e",
+        marginBottom: "10px",
+        letterSpacing: "0.04em",
+      }}
+    >
+      Request Submitted!
+    </h2>
+    <p
+      style={{
+        color: "#666",
+        marginBottom: "8px",
+        fontSize: "1rem",
+        lineHeight: 1.5,
+      }}
+    >
+      Your repair request for{" "}
+      <strong style={{ color: "#c0392b" }}>{regNumber}</strong> has been
+      received.
+    </p>
+    <p style={{ color: "#888", marginBottom: "28px", fontSize: "0.9rem" }}>
+      Our team will contact you shortly. You can track progress using your
+      registration number and phone.
+    </p>
+    <button
+      onClick={onReset}
+      style={{
+        width: "100%",
+        maxWidth: "320px",
+        padding: "14px",
+        background: "linear-gradient(135deg,#c0392b,#96281b)",
+        color: "white",
+        border: "none",
+        borderRadius: "50px",
+        fontFamily: "'Barlow Condensed', sans-serif",
+        fontWeight: 700,
+        fontSize: "1rem",
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+        cursor: "pointer",
+        boxShadow: "0 4px 16px rgba(192,57,43,0.3)",
+      }}
+    >
+      Submit Another Request
+    </button>
+  </div>
+);
 
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
+/* ─── Root Component ─────────────────────────────────────────────────────── */
+const CustomerForm = () => {
+  const [mode, setMode] = useState("new"); // "new" | "existing"
+  const [phase, setPhase] = useState("select"); // "select" | "lookup" | "form" | "success"
+  const [successReg, setSuccessReg] = useState("");
+  const [prefill, setPrefill] = useState({});
+  const [isExistingCustomer, setIsExistingCustomer] = useState(false);
 
-          @keyframes pulse {
-            0% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.5; transform: scale(1.1); }
-            100% { opacity: 1; transform: scale(1); }
+  const handleModeChange = (m) => {
+    setMode(m);
+    setPhase(m === "existing" ? "lookup" : "form");
+    setPrefill({});
+    setIsExistingCustomer(false);
+  };
+
+  const handleAddRepair = (customerData) => {
+    setPrefill(customerData);
+    setIsExistingCustomer(true);
+    setPhase("form");
+  };
+
+  const handleSuccess = (reg) => {
+    setSuccessReg(reg);
+    setPhase("success");
+  };
+
+  const handleReset = () => {
+    setMode("new");
+    setPhase("select");
+    setPrefill({});
+    setIsExistingCustomer(false);
+    setSuccessReg("");
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "var(--bg-main)" }}>
+      <Header />
+
+      {/* Hero Banner */}
+      <div
+        style={{
+          background:
+            "linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%)",
+          padding: "32px 20px",
+          marginBottom: "0",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: "3px",
+            background: "linear-gradient(90deg,#c0392b,#f39c12,#c0392b)",
+          }}
+        />
+        <div className="container" style={{ textAlign: "center" }}>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: "56px",
+              height: "56px",
+              background: "rgba(192,57,43,0.2)",
+              borderRadius: "14px",
+              marginBottom: "14px",
+              border: "1px solid rgba(192,57,43,0.3)",
+            }}
+          >
+            <FaWrench style={{ fontSize: "22px", color: "#c0392b" }} />
+          </div>
+          <h2
+            style={{
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontSize: "2rem",
+              fontWeight: 800,
+              color: "white",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              marginBottom: "8px",
+            }}
+          >
+            Car Repair Request
+          </h2>
+          <p style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.95rem" }}>
+            Submit your vehicle issue — our mechanics will get it sorted.
+          </p>
+        </div>
+      </div>
+
+      {/* Form Card */}
+      <div className="container" style={{ padding: "0 16px" }}>
+        <div
+          style={{
+            background: "white",
+            borderRadius: "16px",
+            padding: "28px 24px",
+            maxWidth: "680px",
+            margin: "-1px auto 40px",
+            boxShadow: "0 8px 40px rgba(0,0,0,0.12)",
+            border: "1px solid #e0e0e0",
+          }}
+        >
+          {/* Customer type toggle — show only when not in form phase */}
+          {phase !== "form" && phase !== "success" && (
+            <ToggleSelector mode={mode} onChange={handleModeChange} />
+          )}
+
+          {phase === "select" && <RepairForm onSuccess={handleSuccess} />}
+
+          {phase === "form" && mode === "new" && (
+            <RepairForm onSuccess={handleSuccess} />
+          )}
+
+          {phase === "lookup" && (
+            <ExistingCustomerView
+              onAddRepair={handleAddRepair}
+              onBack={() => {
+                setPhase("select");
+                setMode("new");
+              }}
+            />
+          )}
+
+          {phase === "form" && isExistingCustomer && (
+            <RepairForm
+              prefillData={prefill}
+              isExistingCustomer
+              onSuccess={handleSuccess}
+              onBack={() => {
+                setPhase("lookup");
+                setMode("existing");
+              }}
+            />
+          )}
+
+          {phase === "success" && (
+            <SuccessScreen regNumber={successReg} onReset={handleReset} />
+          )}
+        </div>
+      </div>
+
+      <Footer />
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+        @keyframes fadeUp { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
+        input:focus, textarea:focus, select:focus {
+          outline: none !important;
+          border-color: #c0392b !important;
+          box-shadow: 0 0 0 3px rgba(192,57,43,0.08) !important;
+        }
+        @media (max-width: 480px) {
+          form > div[style*="grid-template-columns: 1fr 1fr"] {
+            grid-template-columns: 1fr !important;
           }
-        `}
-      </style>
+        }
+      `}</style>
     </div>
   );
 };
