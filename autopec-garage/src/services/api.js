@@ -1,42 +1,34 @@
 import axios from "axios";
 
 // ─── Base URL ─────────────────────────────────────────────────────────────────
-// Strip trailing slash and /api suffix so we never end up with /api/api/...
 const rawBaseUrl =
   import.meta.env.VITE_API_URL || "https://autopec-logistics-btwc.vercel.app";
 const API_BASE_URL = rawBaseUrl.replace(/\/$/, "").replace(/\/api$/, "");
 
 console.log("API Base URL:", API_BASE_URL);
 
-// ─── Free-tier limits (must match cloudinary.js on the server) ───────────────
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
-const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB
-const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB
-const MAX_TOTAL_SIZE = 15 * 1024 * 1024; // 15MB total (matches server)
-const MAX_FILES = 3;
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Free-tier limits ─────────────────────────────────────────────────────────
+export const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+export const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB
+export const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB
+export const MAX_TOTAL_SIZE = 15 * 1024 * 1024; // 15MB combined
+export const MAX_FILES = 3;
 
+// ─── Axios instance ───────────────────────────────────────────────────────────
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: { "Content-Type": "application/json" },
-  timeout: 60000, // 60s — large uploads need time
-  maxContentLength: MAX_TOTAL_SIZE, // Must match server limit
-  maxBodyLength: MAX_TOTAL_SIZE,
+  timeout: 30000, // 30s is plenty — only JSON travels through Vercel now
 });
 
-// Request logger
 api.interceptors.request.use(
   (config) => {
     console.log(`🚀 ${config.method.toUpperCase()} ${config.url}`);
     return config;
   },
-  (error) => {
-    console.error("Request setup error:", error);
-    return Promise.reject(error);
-  },
+  (error) => Promise.reject(error),
 );
 
-// Response logger + error normaliser
 api.interceptors.response.use(
   (response) => {
     console.log("✅ Response:", response.status);
@@ -46,13 +38,12 @@ api.interceptors.response.use(
     if (error.code === "ECONNABORTED") {
       return Promise.reject(new Error("Request timed out. Please try again."));
     }
-
     if (error.response) {
-      console.error("Response error:", {
-        status: error.response.status,
-        data: error.response.data,
-      });
-      // Surface the server's human-readable message
+      console.error(
+        "Response error:",
+        error.response.status,
+        error.response.data,
+      );
       error.message =
         error.response.data?.details ||
         error.response.data?.error ||
@@ -61,100 +52,154 @@ api.interceptors.response.use(
       console.error("No response received");
       error.message = "No response from server. Please check your connection.";
     }
-
     return Promise.reject(error);
   },
 );
 
+// ─── uploadFileToCloudinary ───────────────────────────────────────────────────
+// 1. Fetch a signed upload token from YOUR backend (fast, no file involved)
+// 2. POST the file directly from the browser to Cloudinary's upload API
+//    (bypasses Vercel entirely — no timeouts)
+// Returns a { type, url, publicId, filename } object.
+const uploadFileToCloudinary = async (file, onProgress) => {
+  // Determine folder and resource_type
+  let folder = "repairs";
+  let resource_type = "auto";
+
+  if (file.type.startsWith("image/")) {
+    folder = "repairs/images";
+    resource_type = "image";
+  } else if (file.type.startsWith("video/")) {
+    folder = "repairs/videos";
+    resource_type = "video";
+  } else if (file.type.startsWith("audio/")) {
+    folder = "repairs/audio";
+    resource_type = "video"; // Cloudinary stores audio under "video"
+  }
+
+  // Step 1: get signature from our backend
+  const signRes = await api.post("/api/sign-upload", { folder, resource_type });
+  const { signature, timestamp, api_key, cloud_name } = signRes.data;
+
+  // Step 2: build the multipart form for Cloudinary's upload API
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("api_key", api_key);
+  formData.append("timestamp", String(timestamp));
+  formData.append("signature", signature);
+  formData.append("folder", folder);
+
+  // Apply the same lightweight transformation the server signed for images
+  if (resource_type === "image") {
+    formData.append("transformation", "c_limit,w_1200,h_1200,q_auto:eco");
+  }
+
+  // Step 3: upload directly to Cloudinary (browser → Cloudinary, no Vercel hop)
+  const uploadRes = await axios.post(
+    `https://api.cloudinary.com/v1_1/${cloud_name}/${resource_type}/upload`,
+    formData,
+    {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 120000, // 2 min — Cloudinary can be slow on free tier
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) {
+          onProgress(Math.round((e.loaded * 100) / e.total));
+        }
+      },
+    },
+  );
+
+  const mediaTypeMap = { image: "image", video: "video" };
+  const isAudio = file.type.startsWith("audio/");
+
+  return {
+    type: isAudio ? "audio" : mediaTypeMap[resource_type] || "other",
+    url: uploadRes.data.secure_url,
+    publicId: uploadRes.data.public_id,
+    filename: file.name,
+  };
+};
+
 // ─── submitRepairRequest ──────────────────────────────────────────────────────
-export const submitRepairRequest = async (formData) => {
+// Uploads each file directly to Cloudinary, then sends a single JSON request
+// to the backend with the resulting URLs. Nothing heavy passes through Vercel.
+export const submitRepairRequest = async (formData, onProgress) => {
   try {
-    console.log("📝 Submitting repair request...");
+    console.log("📝 Starting submission...");
 
-    const data = new FormData();
+    // ── Validate files before doing anything ─────────────────────────────────
+    const files = formData.multimedia || [];
 
-    // Attach the text fields as a JSON blob so the server can parse them
-    const repairData = {
+    if (files.length > MAX_FILES) {
+      throw new Error(`Maximum ${MAX_FILES} files allowed per submission.`);
+    }
+
+    const sizeErrors = [];
+    let totalSize = 0;
+
+    files.forEach((file) => {
+      totalSize += file.size;
+      if (file.type.startsWith("image/") && file.size > MAX_IMAGE_SIZE)
+        sizeErrors.push(`"${file.name}" exceeds the 5MB image limit.`);
+      else if (file.type.startsWith("video/") && file.size > MAX_VIDEO_SIZE)
+        sizeErrors.push(`"${file.name}" exceeds the 10MB video limit.`);
+      else if (file.type.startsWith("audio/") && file.size > MAX_AUDIO_SIZE)
+        sizeErrors.push(`"${file.name}" exceeds the 5MB audio limit.`);
+    });
+
+    if (totalSize > MAX_TOTAL_SIZE) {
+      sizeErrors.push(
+        `Combined size is ${(totalSize / (1024 * 1024)).toFixed(2)}MB — max ${MAX_TOTAL_SIZE / (1024 * 1024)}MB.`,
+      );
+    }
+
+    if (sizeErrors.length > 0) {
+      throw new Error(sizeErrors.join(" "));
+    }
+
+    // ── Upload each file directly to Cloudinary ───────────────────────────────
+    const multimedia = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      console.log(`📤 Uploading file ${i + 1}/${files.length}: ${file.name}`);
+
+      const result = await uploadFileToCloudinary(file, (pct) => {
+        if (onProgress) {
+          // Spread progress across files: each file gets an equal share
+          const base = (i / files.length) * 100;
+          const share = (1 / files.length) * pct;
+          onProgress(Math.round(base + share));
+        }
+      });
+
+      console.log(`✅ Uploaded: ${result.url}`);
+      multimedia.push(result);
+    }
+
+    // ── POST JSON to our backend ──────────────────────────────────────────────
+    const payload = {
       registrationNumber: formData.registrationNumber,
       problemDescription: formData.problemDescription,
       customerName: formData.customerName || "",
       phoneNumber: formData.phoneNumber || "",
       carModel: formData.carModel || "",
+      multimedia,
     };
-    data.append("repairData", JSON.stringify(repairData));
 
-    // ── Validate and attach files ─────────────────────────────────────────────
-    if (formData.multimedia && formData.multimedia.length > 0) {
-      const files = formData.multimedia;
-
-      if (files.length > MAX_FILES) {
-        throw new Error(`Maximum ${MAX_FILES} files allowed per submission.`);
-      }
-
-      const errors = [];
-      let totalSize = 0;
-
-      files.forEach((file) => {
-        totalSize += file.size;
-
-        if (file.type.startsWith("image/") && file.size > MAX_IMAGE_SIZE) {
-          errors.push(`"${file.name}" exceeds the 5MB image limit.`);
-        } else if (
-          file.type.startsWith("video/") &&
-          file.size > MAX_VIDEO_SIZE
-        ) {
-          errors.push(`"${file.name}" exceeds the 10MB video limit.`);
-        } else if (
-          file.type.startsWith("audio/") &&
-          file.size > MAX_AUDIO_SIZE
-        ) {
-          errors.push(`"${file.name}" exceeds the 5MB audio limit.`);
-        }
-      });
-
-      if (totalSize > MAX_TOTAL_SIZE) {
-        errors.push(
-          `Total upload size is ${(totalSize / (1024 * 1024)).toFixed(2)}MB — max ${MAX_TOTAL_SIZE / (1024 * 1024)}MB.`,
-        );
-      }
-
-      if (errors.length > 0) {
-        throw new Error(errors.join(" "));
-      }
-
-      files.forEach((file) => {
-        if (file instanceof File) {
-          console.log(
-            `  ➕ ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`,
-          );
-          data.append("multimedia", file);
-        }
-      });
-    }
-
-    const response = await api.post("/api/repairs/submit", data, {
-      headers: { "Content-Type": "multipart/form-data" },
-      onUploadProgress: (e) => {
-        if (e.total) {
-          const pct = Math.round((e.loaded * 100) / e.total);
-          console.log(`Upload progress: ${pct}%`);
-        }
-      },
-    });
-
+    console.log("📡 Sending JSON to backend...");
+    const response = await api.post("/api/repairs/submit", payload);
     console.log("✅ Submission successful:", response.data);
     return response.data;
   } catch (error) {
     console.error("❌ submitRepairRequest error:", error);
 
-    // Normalise the error message for the UI
-    if (error.response?.data?.details) {
+    if (error.response?.data?.details)
       error.message = error.response.data.details;
-    } else if (error.response?.data?.error) {
+    else if (error.response?.data?.error)
       error.message = error.response.data.error;
-    } else if (error.message === "Network Error") {
+    else if (error.message === "Network Error")
       error.message = "Network error. Please check your internet connection.";
-    }
 
     throw error;
   }
@@ -163,7 +208,6 @@ export const submitRepairRequest = async (formData) => {
 // ─── getAllRepairs ────────────────────────────────────────────────────────────
 export const getAllRepairs = async () => {
   try {
-    console.log("📋 Fetching all repairs...");
     const response = await api.get("/api/repairs");
     console.log(`✅ Found ${response.data.length} repairs`);
     return response.data;
@@ -176,7 +220,6 @@ export const getAllRepairs = async () => {
 // ─── deleteRepair ─────────────────────────────────────────────────────────────
 export const deleteRepair = async (id) => {
   try {
-    console.log(`🗑️ Deleting repair: ${id}`);
     const response = await api.delete(`/api/repairs/${id}`);
     console.log("✅ Delete successful");
     return response.data;
@@ -189,7 +232,6 @@ export const deleteRepair = async (id) => {
 // ─── updateRepairStatus ───────────────────────────────────────────────────────
 export const updateRepairStatus = async (id, data) => {
   try {
-    console.log(`📝 Updating repair ${id} → status: ${data.status}`);
     const response = await api.put(`/api/repairs/${id}/status`, data);
     console.log("✅ Update successful");
     return response.data;
@@ -202,7 +244,6 @@ export const updateRepairStatus = async (id, data) => {
 // ─── trackRepair ──────────────────────────────────────────────────────────────
 export const trackRepair = async (registrationNumber) => {
   try {
-    console.log(`🔍 Tracking: ${registrationNumber}`);
     const response = await api.get(
       `/api/repairs/track/${encodeURIComponent(registrationNumber)}`,
     );
@@ -235,11 +276,10 @@ export const isValidMediaFile = (file) => {
   }
 
   let error = null;
-  if (!isValidType) {
+  if (!isValidType)
     error = "Invalid file type. Please upload images, videos, or audio files.";
-  } else if (!isValidSize) {
+  else if (!isValidSize)
     error = `File too large (max ${sizeLimit}). Current: ${(file.size / (1024 * 1024)).toFixed(2)}MB`;
-  }
 
   return {
     valid: isValidType && isValidSize,

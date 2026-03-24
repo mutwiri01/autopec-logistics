@@ -2,11 +2,12 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const repairRoutes = require("./routes/repairs");
+const cloudinaryPkg = require("cloudinary").v2;
 require("dotenv").config();
 
 const app = express();
 
-// ─── CORS ─────────────────────────────────────────────────────────────────────
+// ─── Allowed origins ──────────────────────────────────────────────────────────
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
@@ -14,10 +15,9 @@ const allowedOrigins = [
   "https://autopec-logistics-btwc.vercel.app",
 ];
 
-// Middleware that manually sets CORS headers on EVERY response.
-// This runs before the cors() package so that even error responses
-// (including 4xx from multer) always carry the right headers —
-// without them the browser masks the real error as a CORS failure.
+// ─── CORS: raw middleware runs FIRST, before everything else ─────────────────
+// Guarantees Access-Control-Allow-Origin is on EVERY response including
+// uncaught 500s — without this they appear as CORS errors in the browser.
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (
@@ -37,7 +37,7 @@ app.use((req, res, next) => {
     "Content-Type, Authorization, X-Requested-With",
   );
 
-  // Respond immediately to preflight OPTIONS requests — do NOT forward to routes
+  // Short-circuit all OPTIONS preflights — never forward to routes
   if (req.method === "OPTIONS") {
     return res.sendStatus(204);
   }
@@ -45,7 +45,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// cors() package is kept as a second layer for any edge cases
+// cors() package as a second safety layer
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -66,10 +66,66 @@ app.use(
 );
 
 // ─── Body parsing ─────────────────────────────────────────────────────────────
-// Keep JSON/urlencoded limit at 10MB (matches Cloudinary free tier total).
-// multipart/form-data (file uploads) is handled by multer in the routes.
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+// File uploads no longer pass through this server (direct-to-Cloudinary).
+// Only small JSON payloads arrive here now.
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+
+// ─── Cloudinary configuration ─────────────────────────────────────────────────
+cloudinaryPkg.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+// ─── POST /api/sign-upload ────────────────────────────────────────────────────
+// Returns a short-lived Cloudinary upload signature.
+// The frontend uploads files DIRECTLY to Cloudinary using this signature —
+// zero file bytes travel through Vercel, eliminating the 10s timeout problem.
+app.post("/api/sign-upload", (req, res) => {
+  try {
+    const { folder = "repairs", resource_type = "image" } = req.body;
+
+    const allowedFolders = [
+      "repairs",
+      "repairs/images",
+      "repairs/videos",
+      "repairs/audio",
+    ];
+    const safeFolder = allowedFolders.includes(folder) ? folder : "repairs";
+
+    const timestamp = Math.round(Date.now() / 1000);
+
+    // These params must be sent by the frontend when calling Cloudinary directly.
+    const paramsToSign = {
+      timestamp,
+      folder: safeFolder,
+    };
+
+    // Add a lightweight transformation for images to conserve free-tier credits
+    if (resource_type === "image") {
+      paramsToSign.transformation = "c_limit,w_1200,h_1200,q_auto:eco";
+    }
+
+    const signature = cloudinaryPkg.utils.api_sign_request(
+      paramsToSign,
+      process.env.CLOUDINARY_API_SECRET,
+    );
+
+    return res.json({
+      signature,
+      timestamp,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      folder: safeFolder,
+    });
+  } catch (err) {
+    console.error("sign-upload error:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to generate upload signature" });
+  }
+});
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.get("/", (_req, res) => res.send("Autopec is running."));
@@ -87,14 +143,15 @@ app.get("/health", (_req, res) =>
 app.get("/api", (_req, res) =>
   res.status(200).json({
     message: "Autopec API",
-    version: "1.0.0",
+    version: "2.0.0",
     endpoints: {
       "GET  /api/repairs": "Get all repairs",
-      "POST /api/repairs/submit": "Submit a new repair request",
+      "POST /api/repairs/submit": "Submit repair (JSON, no files)",
       "PUT  /api/repairs/:id/status": "Update repair status",
-      "GET  /api/repairs/track/:reg": "Track repair by registration",
+      "GET  /api/repairs/track/:reg": "Track by registration number",
       "DEL  /api/repairs/:id": "Delete a repair",
       "GET  /api/repairs/status/:status": "Get repairs by status",
+      "POST /api/sign-upload": "Get signed Cloudinary upload token",
     },
   }),
 );
@@ -120,10 +177,9 @@ app.use((err, req, res, next) => {
   }
 
   if (err.name === "ValidationError") {
-    return res.status(400).json({
-      error: "Validation error",
-      details: err.message,
-    });
+    return res
+      .status(400)
+      .json({ error: "Validation error", details: err.message });
   }
 
   if (err.message === "Not allowed by CORS") {
@@ -162,9 +218,7 @@ mongoose.connection.on("disconnected", () =>
 );
 mongoose.connection.on("reconnected", () => console.log("MongoDB reconnected"));
 
-// ─── Start server (local dev) ─────────────────────────────────────────────────
-// On Vercel the app is exported as a serverless function; listen() is only
-// called when running locally.
+// ─── Local dev server ─────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
   app.listen(PORT, () => {
