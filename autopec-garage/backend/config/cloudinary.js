@@ -10,13 +10,16 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Free tier limits - UPDATED FOR FREE PLAN
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB total per upload (Cloudinary free tier limit)
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB for images (reduced for free tier)
-const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB for videos (reduced for free tier)
-const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB for audio
-const MAX_FILES_PER_REQUEST = 3; // Max 3 files per request
-const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB total for all files combined
+// ─── FREE TIER LIMITS ────────────────────────────────────────────────────────
+// Cloudinary free plan: 25 credits/month, 25GB storage, 25GB bandwidth
+// Safe per-file limits to stay well within free tier:
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB per image
+const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB per video
+const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB per audio
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB hard cap (multer)
+const MAX_FILES_PER_REQUEST = 3; // Max 3 files per submission
+const MAX_TOTAL_SIZE = 15 * 1024 * 1024; // 15MB total across all files
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Check if Cloudinary is properly configured
 if (
@@ -29,63 +32,56 @@ if (
   );
 }
 
-// Configure storage for different file types - SIMPLIFIED FOR FREE TIER
+// Configure storage for different file types
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: async (req, file) => {
-    // Determine folder and resource type based on file mimetype
     let folder = "repairs";
     let resource_type = "auto";
-    let format = undefined;
 
     if (file.mimetype.startsWith("image/")) {
       folder = "repairs/images";
       resource_type = "image";
-      // Keep original format for images
-      format = file.mimetype.split("/")[1];
     } else if (file.mimetype.startsWith("video/")) {
       folder = "repairs/videos";
       resource_type = "video";
     } else if (file.mimetype.startsWith("audio/")) {
       folder = "repairs/audio";
-      resource_type = "video"; // Audio files use video resource type in Cloudinary
+      // Cloudinary requires resource_type "video" for audio files
+      resource_type = "video";
     }
 
-    // SIMPLIFIED TRANSFORMATIONS FOR FREE TIER
-    const transformation = [];
+    // Keep transformations minimal on free tier to avoid timeouts.
+    // Only apply a simple quality/size cap — no format conversion.
+    let transformation = undefined;
 
     if (file.mimetype.startsWith("image/")) {
-      // Compress images for free tier
-      transformation.push({
-        width: 1024,
-        height: 1024,
-        crop: "limit",
-        quality: "auto:good",
-      });
-    } else if (file.mimetype.startsWith("video/")) {
-      // Compress videos
-      transformation.push({
-        width: 854,
-        height: 480,
-        crop: "limit",
-        quality: "auto:good",
-      });
+      transformation = [
+        {
+          width: 1200,
+          height: 1200,
+          crop: "limit",
+          quality: "auto:eco",
+          fetch_format: "auto",
+        },
+      ];
     }
+    // No transformation for video/audio on free tier — transcoding burns credits fast.
 
     return {
-      folder: folder,
-      resource_type: resource_type,
-      public_id: `${Date.now()}-${Math.round(Math.random() * 1e9)}`,
-      format: format,
-      transformation: transformation.length > 0 ? transformation : undefined,
-      timeout: 30000, // 30 seconds timeout
+      folder,
+      resource_type,
+      // Use a timestamp + random string as the public_id so it's unique
+      public_id: `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`,
+      transformation,
+      // Do NOT pass a `format` field — letting Cloudinary keep the original
+      // format avoids re-encoding failures on the free tier.
     };
   },
 });
 
-// File filter function - STRICTER FOR FREE TIER
+// File filter — accept common safe formats only
 const fileFilter = (req, file, cb) => {
-  // Check file type - limited to common formats for free tier
   const allowedTypes = [
     "image/jpeg",
     "image/jpg",
@@ -105,91 +101,57 @@ const fileFilter = (req, file, cb) => {
   } else {
     cb(
       new Error(
-        `Invalid file type: ${file.mimetype}. Allowed types: JPEG, PNG, WEBP images, MP4 videos, MP3/WAV audio`,
+        `Invalid file type: ${file.mimetype}. Allowed: JPEG, PNG, WEBP, MP4, WebM, MP3, WAV`,
       ),
       false,
     );
   }
 };
 
-// Custom validation middleware to check total size before upload
-const validateUpload = (req, res, next) => {
-  if (!req.files && !req.file) {
-    return next();
-  }
-
-  const files = req.files || (req.file ? [req.file] : []);
-  let totalSize = 0;
-
-  for (const file of files) {
-    totalSize += file.size;
-  }
-
-  // Check total size
-  if (totalSize > MAX_TOTAL_SIZE) {
-    return res.status(400).json({
-      error: "Total file size exceeds limit",
-      details: `Total size of all files must be less than ${MAX_TOTAL_SIZE / (1024 * 1024)}MB. Current total: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`,
-    });
-  }
-
-  // Check individual file sizes
-  for (const file of files) {
-    if (file.mimetype.startsWith("image/") && file.size > MAX_IMAGE_SIZE) {
-      return res.status(400).json({
-        error: "Image file too large",
-        details: `Image must be less than ${MAX_IMAGE_SIZE / (1024 * 1024)}MB`,
-      });
-    }
-    if (file.mimetype.startsWith("video/") && file.size > MAX_VIDEO_SIZE) {
-      return res.status(400).json({
-        error: "Video file too large",
-        details: `Video must be less than ${MAX_VIDEO_SIZE / (1024 * 1024)}MB`,
-      });
-    }
-    if (file.mimetype.startsWith("audio/") && file.size > MAX_AUDIO_SIZE) {
-      return res.status(400).json({
-        error: "Audio file too large",
-        details: `Audio must be less than ${MAX_AUDIO_SIZE / (1024 * 1024)}MB`,
-      });
-    }
-  }
-
-  next();
-};
-
-// Create multer upload middleware with limits
+// Multer upload instance
 const upload = multer({
-  storage: storage,
-  fileFilter: fileFilter,
+  storage,
+  fileFilter,
   limits: {
-    fileSize: MAX_VIDEO_SIZE, // Allow up to video size, we'll check per type
+    fileSize: MAX_FILE_SIZE, // Per-file cap enforced by multer
     files: MAX_FILES_PER_REQUEST,
     fieldSize: 5 * 1024 * 1024, // 5MB for text fields
   },
 });
 
-// Helper function to delete media from Cloudinary
-const deleteMedia = async (publicId, resourceType = "image") => {
+// ─── deleteMedia ─────────────────────────────────────────────────────────────
+// IMPORTANT: audio files are stored as resource_type "video" in Cloudinary.
+// The `mediaType` param should reflect the Cloudinary resource_type, not the
+// HTML media kind. Callers must pass the correct type.
+const deleteMedia = async (publicId, mediaType = "image") => {
   try {
     if (!publicId) {
-      console.log("No publicId provided for deletion");
-      return;
+      console.log("⚠️ deleteMedia: no publicId provided, skipping.");
+      return null;
     }
 
+    // Map our internal type names to Cloudinary resource_type values
+    // "audio" is stored as "video" in Cloudinary
+    const resourceTypeMap = {
+      image: "image",
+      video: "video",
+      audio: "video", // ← critical: audio uses video resource_type
+      other: "raw",
+    };
+
+    const resource_type = resourceTypeMap[mediaType] || "image";
+
     console.log(
-      `Attempting to delete from Cloudinary: ${publicId} (${resourceType})`,
+      `🗑️ Deleting from Cloudinary: ${publicId} (resource_type: ${resource_type})`,
     );
 
     const result = await cloudinary.uploader.destroy(publicId, {
-      resource_type: resourceType,
+      resource_type,
       invalidate: true,
     });
 
-    console.log("Cloudinary deletion result:", result);
-
     if (result.result === "ok") {
-      console.log(`✅ Successfully deleted ${publicId}`);
+      console.log(`✅ Deleted ${publicId}`);
     } else {
       console.log(`⚠️ Could not delete ${publicId}: ${result.result}`);
     }
@@ -200,27 +162,26 @@ const deleteMedia = async (publicId, resourceType = "image") => {
     return null;
   }
 };
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Helper to validate file before upload
+// Validate a single file object (used before upload)
 const validateFile = (file) => {
   const errors = [];
 
-  // Check file size based on type
   if (file.mimetype.startsWith("image/") && file.size > MAX_IMAGE_SIZE) {
     errors.push(
-      `Image ${file.originalname} exceeds the ${MAX_IMAGE_SIZE / (1024 * 1024)}MB limit (${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
+      `Image "${file.originalname}" is ${(file.size / (1024 * 1024)).toFixed(2)}MB — max 5MB`,
     );
   } else if (file.mimetype.startsWith("video/") && file.size > MAX_VIDEO_SIZE) {
     errors.push(
-      `Video ${file.originalname} exceeds the ${MAX_VIDEO_SIZE / (1024 * 1024)}MB limit (${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
+      `Video "${file.originalname}" is ${(file.size / (1024 * 1024)).toFixed(2)}MB — max 10MB`,
     );
   } else if (file.mimetype.startsWith("audio/") && file.size > MAX_AUDIO_SIZE) {
     errors.push(
-      `Audio ${file.originalname} exceeds the ${MAX_AUDIO_SIZE / (1024 * 1024)}MB limit (${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
+      `Audio "${file.originalname}" is ${(file.size / (1024 * 1024)).toFixed(2)}MB — max 5MB`,
     );
   }
 
-  // Check file type
   const allowedTypes = [
     "image/jpeg",
     "image/jpg",
@@ -237,14 +198,39 @@ const validateFile = (file) => {
 
   if (!allowedTypes.includes(file.mimetype)) {
     errors.push(
-      `File ${file.originalname} has unsupported type: ${file.mimetype}`,
+      `"${file.originalname}" has unsupported type: ${file.mimetype}`,
     );
   }
 
-  return {
-    valid: errors.length === 0,
-    errors,
-  };
+  return { valid: errors.length === 0, errors };
+};
+
+// Middleware to validate total upload size after multer has parsed the request
+const validateUpload = (req, res, next) => {
+  const files = req.files || (req.file ? [req.file] : []);
+  if (files.length === 0) return next();
+
+  const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+
+  if (totalSize > MAX_TOTAL_SIZE) {
+    return res.status(400).json({
+      error: "Total file size exceeds limit",
+      details:
+        `All files combined must be under ${MAX_TOTAL_SIZE / (1024 * 1024)}MB. ` +
+        `Current total: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`,
+    });
+  }
+
+  for (const file of files) {
+    const { valid, errors } = validateFile(file);
+    if (!valid) {
+      return res
+        .status(400)
+        .json({ error: "File validation failed", details: errors.join(", ") });
+    }
+  }
+
+  next();
 };
 
 module.exports = {

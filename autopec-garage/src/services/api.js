@@ -1,85 +1,79 @@
 import axios from "axios";
 
-/**
- * ERROR FIX 1: URL Sanitization
- * We extract the base URL and use .replace() to ensure that if the
- * environment variable ends in "/" or "/api", they are stripped away.
- * This prevents the final URL from becoming /api/api/...
- */
+// ─── Base URL ─────────────────────────────────────────────────────────────────
+// Strip trailing slash and /api suffix so we never end up with /api/api/...
 const rawBaseUrl =
   import.meta.env.VITE_API_URL || "https://autopec-logistics-btwc.vercel.app";
 const API_BASE_URL = rawBaseUrl.replace(/\/$/, "").replace(/\/api$/, "");
 
 console.log("API Base URL:", API_BASE_URL);
 
+// ─── Free-tier limits (must match cloudinary.js on the server) ───────────────
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_TOTAL_SIZE = 15 * 1024 * 1024; // 15MB total (matches server)
+const MAX_FILES = 3;
+// ─────────────────────────────────────────────────────────────────────────────
+
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-  timeout: 30000, // 30 second timeout for file uploads
-  maxContentLength: 20 * 1024 * 1024, // 20MB max content length
-  maxBodyLength: 20 * 1024 * 1024, // 20MB max body length
+  headers: { "Content-Type": "application/json" },
+  timeout: 60000, // 60s — large uploads need time
+  maxContentLength: MAX_TOTAL_SIZE, // Must match server limit
+  maxBodyLength: MAX_TOTAL_SIZE,
 });
 
-// Add request interceptor for logging
+// Request logger
 api.interceptors.request.use(
   (config) => {
-    console.log(`🚀 ${config.method.toUpperCase()} request to: ${config.url}`);
+    console.log(`🚀 ${config.method.toUpperCase()} ${config.url}`);
     return config;
   },
   (error) => {
-    console.error("Request error:", error);
+    console.error("Request setup error:", error);
     return Promise.reject(error);
   },
 );
 
-// Add response interceptor for error handling
+// Response logger + error normaliser
 api.interceptors.response.use(
   (response) => {
-    console.log("✅ Response received:", response.status);
+    console.log("✅ Response:", response.status);
     return response;
   },
   (error) => {
     if (error.code === "ECONNABORTED") {
-      console.error("Request timeout");
-      return Promise.reject(new Error("Request timeout. Please try again."));
+      return Promise.reject(new Error("Request timed out. Please try again."));
     }
 
     if (error.response) {
-      // The request was made and the server responded with a status code
-      // that falls out of the range of 2xx
       console.error("Response error:", {
         status: error.response.status,
         data: error.response.data,
-        headers: error.response.headers,
       });
-
-      // Enhance error message with server response
+      // Surface the server's human-readable message
       error.message =
         error.response.data?.details ||
         error.response.data?.error ||
         error.message;
     } else if (error.request) {
-      // The request was made but no response was received
-      console.error("No response received:", error.request);
+      console.error("No response received");
       error.message = "No response from server. Please check your connection.";
-    } else {
-      // Something happened in setting up the request that triggered an Error
-      console.error("Request setup error:", error.message);
     }
 
     return Promise.reject(error);
   },
 );
 
-// Submit repair request with multimedia support
+// ─── submitRepairRequest ──────────────────────────────────────────────────────
 export const submitRepairRequest = async (formData) => {
   try {
     console.log("📝 Submitting repair request...");
 
     const data = new FormData();
 
+    // Attach the text fields as a JSON blob so the server can parse them
     const repairData = {
       registrationNumber: formData.registrationNumber,
       problemDescription: formData.problemDescription,
@@ -87,82 +81,63 @@ export const submitRepairRequest = async (formData) => {
       phoneNumber: formData.phoneNumber || "",
       carModel: formData.carModel || "",
     };
-
     data.append("repairData", JSON.stringify(repairData));
 
-    // Validate and add multimedia files
+    // ── Validate and attach files ─────────────────────────────────────────────
     if (formData.multimedia && formData.multimedia.length > 0) {
-      console.log(`📎 Adding ${formData.multimedia.length} files...`);
+      const files = formData.multimedia;
 
-      // Free tier limits
-      const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB for images
-      const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB for videos
-      const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB for audio
-      const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB total
-      const MAX_FILES = 3; // Max 3 files
-
-      // Check number of files
-      if (formData.multimedia.length > MAX_FILES) {
-        throw new Error(`Maximum ${MAX_FILES} files allowed per submission`);
+      if (files.length > MAX_FILES) {
+        throw new Error(`Maximum ${MAX_FILES} files allowed per submission.`);
       }
 
-      let totalSize = 0;
       const errors = [];
+      let totalSize = 0;
 
-      formData.multimedia.forEach((file) => {
+      files.forEach((file) => {
         totalSize += file.size;
 
-        // Check file size based on type
         if (file.type.startsWith("image/") && file.size > MAX_IMAGE_SIZE) {
-          errors.push(`${file.name} exceeds 5MB limit for images`);
+          errors.push(`"${file.name}" exceeds the 5MB image limit.`);
         } else if (
           file.type.startsWith("video/") &&
           file.size > MAX_VIDEO_SIZE
         ) {
-          errors.push(`${file.name} exceeds 10MB limit for videos`);
+          errors.push(`"${file.name}" exceeds the 10MB video limit.`);
         } else if (
           file.type.startsWith("audio/") &&
           file.size > MAX_AUDIO_SIZE
         ) {
-          errors.push(`${file.name} exceeds 5MB limit for audio`);
+          errors.push(`"${file.name}" exceeds the 5MB audio limit.`);
         }
       });
 
-      // Check total size
       if (totalSize > MAX_TOTAL_SIZE) {
         errors.push(
-          `Total file size exceeds 10MB limit (${(totalSize / (1024 * 1024)).toFixed(2)}MB)`,
+          `Total upload size is ${(totalSize / (1024 * 1024)).toFixed(2)}MB — max ${MAX_TOTAL_SIZE / (1024 * 1024)}MB.`,
         );
       }
 
       if (errors.length > 0) {
-        throw new Error(errors.join(". "));
+        throw new Error(errors.join(" "));
       }
 
-      formData.multimedia.forEach((file) => {
+      files.forEach((file) => {
         if (file instanceof File) {
           console.log(
-            `  - Adding file: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`,
+            `  ➕ ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`,
           );
           data.append("multimedia", file);
         }
       });
     }
 
-    /**
-     * ERROR FIX 2: Correcting the Method Call
-     * Using the correct API endpoint path
-     */
     const response = await api.post("/api/repairs/submit", data, {
-      headers: {
-        "Content-Type": "multipart/form-data",
-      },
-      onUploadProgress: (progressEvent) => {
-        if (progressEvent.total) {
-          const percentCompleted = Math.round(
-            (progressEvent.loaded * 100) / progressEvent.total,
-          );
-          console.log(`Upload progress: ${percentCompleted}%`);
+      headers: { "Content-Type": "multipart/form-data" },
+      onUploadProgress: (e) => {
+        if (e.total) {
+          const pct = Math.round((e.loaded * 100) / e.total);
+          console.log(`Upload progress: ${pct}%`);
         }
       },
     });
@@ -170,9 +145,9 @@ export const submitRepairRequest = async (formData) => {
     console.log("✅ Submission successful:", response.data);
     return response.data;
   } catch (error) {
-    console.error("❌ Error in submitRepairRequest:", error);
+    console.error("❌ submitRepairRequest error:", error);
 
-    // Enhance error message for user
+    // Normalise the error message for the UI
     if (error.response?.data?.details) {
       error.message = error.response.data.details;
     } else if (error.response?.data?.error) {
@@ -185,24 +160,20 @@ export const submitRepairRequest = async (formData) => {
   }
 };
 
-// Get all repairs
+// ─── getAllRepairs ────────────────────────────────────────────────────────────
 export const getAllRepairs = async () => {
   try {
     console.log("📋 Fetching all repairs...");
-    /**
-     * ERROR FIX 3: Preventing path duplication
-     * Using the correct API endpoint path
-     */
     const response = await api.get("/api/repairs");
     console.log(`✅ Found ${response.data.length} repairs`);
     return response.data;
   } catch (error) {
-    console.error("❌ Error in getAllRepairs:", error);
+    console.error("❌ getAllRepairs error:", error);
     throw error;
   }
 };
 
-// Delete a repair
+// ─── deleteRepair ─────────────────────────────────────────────────────────────
 export const deleteRepair = async (id) => {
   try {
     console.log(`🗑️ Deleting repair: ${id}`);
@@ -210,45 +181,44 @@ export const deleteRepair = async (id) => {
     console.log("✅ Delete successful");
     return response.data;
   } catch (error) {
-    console.error("❌ Error in deleteRepair:", error);
+    console.error("❌ deleteRepair error:", error);
     throw error;
   }
 };
 
-// Update repair status
+// ─── updateRepairStatus ───────────────────────────────────────────────────────
 export const updateRepairStatus = async (id, data) => {
   try {
-    console.log(`📝 Updating repair ${id} status to: ${data.status}`);
+    console.log(`📝 Updating repair ${id} → status: ${data.status}`);
     const response = await api.put(`/api/repairs/${id}/status`, data);
     console.log("✅ Update successful");
     return response.data;
   } catch (error) {
-    console.error("❌ Error in updateRepairStatus:", error);
+    console.error("❌ updateRepairStatus error:", error);
     throw error;
   }
 };
 
-// Track repair by registration number
+// ─── trackRepair ──────────────────────────────────────────────────────────────
 export const trackRepair = async (registrationNumber) => {
   try {
-    console.log(`🔍 Tracking repair: ${registrationNumber}`);
-    const response = await api.get(`/api/repairs/track/${registrationNumber}`);
+    console.log(`🔍 Tracking: ${registrationNumber}`);
+    const response = await api.get(
+      `/api/repairs/track/${encodeURIComponent(registrationNumber)}`,
+    );
     console.log("✅ Tracking successful");
     return response.data;
   } catch (error) {
-    console.error("❌ Error in trackRepair:", error);
+    console.error("❌ trackRepair error:", error);
     throw error;
   }
 };
 
-// Helper function to check if a file is valid for upload
-export const isValidMediaFile = (file) => {
-  const validTypes = ["image/", "video/", "audio/"];
-  const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB for images
-  const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB for videos
-  const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB for audio
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-  const isValidType = validTypes.some((type) => file.type.startsWith(type));
+export const isValidMediaFile = (file) => {
+  const validPrefixes = ["image/", "video/", "audio/"];
+  const isValidType = validPrefixes.some((p) => file.type.startsWith(p));
 
   let isValidSize = true;
   let sizeLimit = "10MB";
@@ -268,27 +238,25 @@ export const isValidMediaFile = (file) => {
   if (!isValidType) {
     error = "Invalid file type. Please upload images, videos, or audio files.";
   } else if (!isValidSize) {
-    error = `File too large (max ${sizeLimit}). Current size: ${(file.size / (1024 * 1024)).toFixed(2)}MB`;
+    error = `File too large (max ${sizeLimit}). Current: ${(file.size / (1024 * 1024)).toFixed(2)}MB`;
   }
 
   return {
     valid: isValidType && isValidSize,
     type: isValidType,
     size: isValidSize,
-    error: error,
+    error,
   };
 };
 
-// Helper function to format file size
 export const formatFileSize = (bytes) => {
   if (bytes === 0) return "0 Bytes";
   const k = 1024;
   const sizes = ["Bytes", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 };
 
-// Helper function to get media type from file
 export const getMediaTypeFromFile = (file) => {
   if (file.type.startsWith("image/")) return "image";
   if (file.type.startsWith("video/")) return "video";
@@ -296,19 +264,11 @@ export const getMediaTypeFromFile = (file) => {
   return "other";
 };
 
-// Helper function to create object URL for preview
-export const createMediaPreview = (file) => {
-  if (file instanceof File) {
-    return URL.createObjectURL(file);
-  }
-  return file;
-};
+export const createMediaPreview = (file) =>
+  file instanceof File ? URL.createObjectURL(file) : file;
 
-// Helper function to revoke object URL
 export const revokeMediaPreview = (url) => {
-  if (url && url.startsWith("blob:")) {
-    URL.revokeObjectURL(url);
-  }
+  if (url && url.startsWith("blob:")) URL.revokeObjectURL(url);
 };
 
 export default api;

@@ -5,7 +5,6 @@ const {
   upload,
   deleteMedia,
   validateFile,
-  validateUpload,
   MAX_FILES_PER_REQUEST,
   MAX_TOTAL_SIZE,
   MAX_IMAGE_SIZE,
@@ -13,116 +12,114 @@ const {
   MAX_AUDIO_SIZE,
 } = require("../config/cloudinary");
 
-// Submit new repair request with multimedia
-router.post("/submit", (req, res, next) => {
-  // First validate total size if we have files
+// ─── Helper: clean up Cloudinary files on error ───────────────────────────────
+// Must be called with await; uses the correct resource_type per file.
+const cleanupFiles = async (files) => {
+  if (!files || files.length === 0) return;
+  for (const file of files) {
+    try {
+      if (!file.filename) continue;
+      // Determine resource_type from the file's mimetype
+      let mediaType = "image";
+      if (file.mimetype && file.mimetype.startsWith("video/"))
+        mediaType = "video";
+      if (file.mimetype && file.mimetype.startsWith("audio/"))
+        mediaType = "audio";
+      await deleteMedia(file.filename, mediaType);
+    } catch (err) {
+      console.error("Error during cleanup:", err);
+    }
+  }
+};
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── POST /submit ─────────────────────────────────────────────────────────────
+// Submit new repair request (with optional multimedia files)
+router.post("/submit", (req, res) => {
   const uploadMiddleware = upload.array("multimedia", MAX_FILES_PER_REQUEST);
 
-  uploadMiddleware(req, res, (err) => {
+  uploadMiddleware(req, res, async (err) => {
+    // ── Step 1: Handle multer errors ─────────────────────────────────────────
     if (err) {
-      console.error("Upload error:", err);
+      console.error("Upload middleware error:", err);
 
-      // Handle specific multer errors
       if (err.code === "LIMIT_FILE_SIZE") {
         return res.status(400).json({
           error: "File too large",
-          details: "Maximum file size: 5MB for images/audio, 10MB for videos",
+          details: "Max size: 5MB for images/audio, 10MB for videos.",
         });
       }
-
       if (err.code === "LIMIT_FILE_COUNT") {
         return res.status(400).json({
           error: "Too many files",
-          details: `Maximum ${MAX_FILES_PER_REQUEST} files allowed per request`,
+          details: `Maximum ${MAX_FILES_PER_REQUEST} files allowed per request.`,
         });
       }
-
       if (err.code === "LIMIT_FIELD_KEY") {
         return res.status(400).json({
           error: "Invalid field name",
-          details: "Please use 'multimedia' as the field name for files",
+          details: "Use 'multimedia' as the field name for files.",
         });
       }
-
       return res.status(400).json({
         error: "File upload error",
         details: err.message,
       });
     }
 
-    // Now validate total size of all files
+    // ── Step 2: Validate file sizes synchronously (FIX: was async race) ──────
     if (req.files && req.files.length > 0) {
-      let totalSize = 0;
-      for (const file of req.files) {
-        totalSize += file.size;
-      }
-
+      // Check total size
+      const totalSize = req.files.reduce((sum, f) => sum + f.size, 0);
       if (totalSize > MAX_TOTAL_SIZE) {
-        // Clean up uploaded files
-        Promise.all(
-          req.files.map((file) => deleteMedia(file.filename).catch(() => {})),
-        ).then(() => {
-          return res.status(400).json({
-            error: "Total file size exceeds limit",
-            details: `Total size of all files must be less than ${MAX_TOTAL_SIZE / (1024 * 1024)}MB. Current total: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`,
-          });
+        await cleanupFiles(req.files);
+        return res.status(400).json({
+          error: "Total file size exceeds limit",
+          details:
+            `All files combined must be under ${MAX_TOTAL_SIZE / (1024 * 1024)}MB. ` +
+            `Current total: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`,
         });
-        return;
       }
 
-      // Validate individual file sizes
+      // Check individual file sizes
       for (const file of req.files) {
         if (file.mimetype.startsWith("image/") && file.size > MAX_IMAGE_SIZE) {
-          // Clean up uploaded files
-          Promise.all(
-            req.files.map((f) => deleteMedia(f.filename).catch(() => {})),
-          ).then(() => {
-            return res.status(400).json({
-              error: "Image file too large",
-              details: `Image must be less than ${MAX_IMAGE_SIZE / (1024 * 1024)}MB`,
-            });
+          await cleanupFiles(req.files);
+          return res.status(400).json({
+            error: "Image file too large",
+            details: `Image must be under ${MAX_IMAGE_SIZE / (1024 * 1024)}MB.`,
           });
-          return;
         }
         if (file.mimetype.startsWith("video/") && file.size > MAX_VIDEO_SIZE) {
-          // Clean up uploaded files
-          Promise.all(
-            req.files.map((f) => deleteMedia(f.filename).catch(() => {})),
-          ).then(() => {
-            return res.status(400).json({
-              error: "Video file too large",
-              details: `Video must be less than ${MAX_VIDEO_SIZE / (1024 * 1024)}MB`,
-            });
+          await cleanupFiles(req.files);
+          return res.status(400).json({
+            error: "Video file too large",
+            details: `Video must be under ${MAX_VIDEO_SIZE / (1024 * 1024)}MB.`,
           });
-          return;
         }
         if (file.mimetype.startsWith("audio/") && file.size > MAX_AUDIO_SIZE) {
-          // Clean up uploaded files
-          Promise.all(
-            req.files.map((f) => deleteMedia(f.filename).catch(() => {})),
-          ).then(() => {
-            return res.status(400).json({
-              error: "Audio file too large",
-              details: `Audio must be less than ${MAX_AUDIO_SIZE / (1024 * 1024)}MB`,
-            });
+          await cleanupFiles(req.files);
+          return res.status(400).json({
+            error: "Audio file too large",
+            details: `Audio must be under ${MAX_AUDIO_SIZE / (1024 * 1024)}MB.`,
           });
-          return;
         }
       }
     }
 
-    // Proceed with the rest of the submission
-    submitRepairRequest(req, res);
+    // ── Step 3: Process the submission ───────────────────────────────────────
+    await submitRepairRequest(req, res);
   });
 });
 
+// ─── Core submission logic ────────────────────────────────────────────────────
 const submitRepairRequest = async (req, res) => {
   try {
-    console.log("📝 Received submission request");
-    console.log("Body:", req.body);
-    console.log("Files:", req.files ? req.files.length : 0);
+    console.log("📝 Processing submission...");
+    console.log("Body keys:", Object.keys(req.body));
+    console.log("Files received:", req.files ? req.files.length : 0);
 
-    // Parse the repair data
+    // Parse repairData from body (sent as JSON string in FormData)
     let repairData = {};
     if (req.body.repairData) {
       try {
@@ -130,38 +127,26 @@ const submitRepairRequest = async (req, res) => {
           typeof req.body.repairData === "string"
             ? JSON.parse(req.body.repairData)
             : req.body.repairData;
-      } catch (e) {
-        console.error("Error parsing repairData:", e);
+      } catch (parseErr) {
+        console.error("Failed to parse repairData JSON:", parseErr);
         repairData = req.body;
       }
     } else {
       repairData = req.body;
     }
 
-    console.log("Parsed repair data:", repairData);
+    console.log("Parsed repairData:", repairData);
 
     // Validate required fields
     if (!repairData.registrationNumber || !repairData.problemDescription) {
-      // Clean up uploaded files if validation fails
-      if (req.files && req.files.length > 0) {
-        for (const file of req.files) {
-          try {
-            if (file.filename) {
-              await deleteMedia(file.filename);
-            }
-          } catch (deleteError) {
-            console.error("Error cleaning up file:", deleteError);
-          }
-        }
-      }
-
+      await cleanupFiles(req.files);
       return res.status(400).json({
-        error: "Registration number and problem description are required",
-        details: "Please fill in all required fields",
+        error: "Validation failed",
+        details: "Registration number and problem description are required.",
       });
     }
 
-    // Handle uploaded files from Cloudinary
+    // Build multimedia array from successfully uploaded Cloudinary files
     const multimedia = [];
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
@@ -172,19 +157,19 @@ const submitRepairRequest = async (req, res) => {
 
         multimedia.push({
           type: fileType,
-          url: file.path,
-          publicId: file.filename,
+          url: file.path, // Cloudinary secure URL
+          publicId: file.filename, // Cloudinary public_id
           filename: file.originalname,
           uploadedAt: new Date(),
         });
 
         console.log(
-          `✅ File uploaded: ${file.originalname} (${fileType}) - URL: ${file.path}`,
+          `✅ Cloudinary upload: ${file.originalname} → ${file.path}`,
         );
       }
     }
 
-    // Create repair document
+    // Persist to MongoDB
     const repair = new Repair({
       registrationNumber: repairData.registrationNumber.toUpperCase().trim(),
       problemDescription: repairData.problemDescription.trim(),
@@ -194,14 +179,14 @@ const submitRepairRequest = async (req, res) => {
       phoneNumber: repairData.phoneNumber ? repairData.phoneNumber.trim() : "",
       carModel: repairData.carModel ? repairData.carModel.trim() : "",
       status: "submitted",
-      multimedia: multimedia,
+      multimedia,
     });
 
-    console.log("💾 Saving repair to database...");
+    console.log("💾 Saving repair to MongoDB...");
     await repair.save();
-    console.log("✅ Repair saved successfully with ID:", repair._id);
+    console.log("✅ Repair saved:", repair._id);
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Repair request submitted successfully",
       repair: {
@@ -212,70 +197,56 @@ const submitRepairRequest = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("❌ Error submitting repair:", error);
+    console.error("❌ submitRepairRequest error:", error);
 
-    // If there was an error, try to clean up uploaded files from Cloudinary
-    if (req.files && req.files.length > 0) {
-      console.log("🧹 Cleaning up uploaded files due to error...");
-      for (const file of req.files) {
-        try {
-          if (file.filename) {
-            await deleteMedia(file.filename);
-          }
-        } catch (deleteError) {
-          console.error("Error cleaning up file:", deleteError);
-        }
-      }
-    }
+    // Clean up any uploaded files since the DB save failed
+    await cleanupFiles(req.files);
 
-    // Handle MongoDB validation errors
     if (error.name === "ValidationError") {
-      const errors = Object.values(error.errors).map((err) => err.message);
+      const messages = Object.values(error.errors).map((e) => e.message);
       return res.status(400).json({
         error: "Validation error",
-        details: errors.join(", "),
+        details: messages.join(", "),
       });
     }
-
-    // Handle duplicate key errors
     if (error.code === 11000) {
       return res.status(400).json({
         error: "Duplicate entry",
-        details: "A repair with this information already exists",
+        details: "A repair with this information already exists.",
       });
     }
 
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed to submit repair request",
       details: error.message,
-      suggestion: "Please try again or contact support if the problem persists",
     });
   }
 };
 
-// Get all repairs (for mechanic dashboard)
+// ─── GET / ────────────────────────────────────────────────────────────────────
+// Get all repairs (mechanic dashboard)
 router.get("/", async (req, res) => {
   try {
     console.log("📋 Fetching all repairs...");
     const repairs = await Repair.find().sort({ createdAt: -1 });
     console.log(`✅ Found ${repairs.length} repairs`);
-    res.json(repairs);
+    return res.json(repairs);
   } catch (error) {
     console.error("❌ Error fetching repairs:", error);
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed to fetch repairs",
       details: error.message,
     });
   }
 });
 
-// Update repair status
+// ─── PUT /:id/status ──────────────────────────────────────────────────────────
+// Update repair status and/or mechanic notes
 router.put("/:id/status", async (req, res) => {
   try {
     const { status, mechanicNotes } = req.body;
-    console.log(`📝 Updating repair ${req.params.id} to status: ${status}`);
+    console.log(`📝 Updating repair ${req.params.id} → status: ${status}`);
 
-    // Validate status
     if (!status) {
       return res.status(400).json({ error: "Status is required" });
     }
@@ -307,22 +278,23 @@ router.put("/:id/status", async (req, res) => {
       return res.status(404).json({ error: "Repair not found" });
     }
 
-    console.log("✅ Repair updated successfully");
-    res.json(repair);
+    console.log("✅ Repair updated");
+    return res.json(repair);
   } catch (error) {
     console.error("❌ Error updating repair:", error);
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed to update repair",
       details: error.message,
     });
   }
 });
 
-// Get repair by registration number
+// ─── GET /track/:registration ─────────────────────────────────────────────────
+// Track a repair by vehicle registration number
 router.get("/track/:registration", async (req, res) => {
   try {
     const registration = req.params.registration.toUpperCase().trim();
-    console.log(`🔍 Tracking repair: ${registration}`);
+    console.log(`🔍 Tracking: ${registration}`);
 
     const repair = await Repair.findOne({
       registrationNumber: registration,
@@ -331,22 +303,23 @@ router.get("/track/:registration", async (req, res) => {
     if (!repair) {
       return res.status(404).json({
         error: "Repair not found",
-        details: `No repair found with registration number: ${registration}`,
+        details: `No repair found for registration: ${registration}`,
       });
     }
 
     console.log("✅ Repair found");
-    res.json(repair);
+    return res.json(repair);
   } catch (error) {
     console.error("❌ Error tracking repair:", error);
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed to track repair",
       details: error.message,
     });
   }
 });
 
-// Delete repair and associated media
+// ─── DELETE /:id ──────────────────────────────────────────────────────────────
+// Delete a repair and its associated Cloudinary media
 router.delete("/:id", async (req, res) => {
   try {
     console.log(`🗑️ Deleting repair: ${req.params.id}`);
@@ -356,41 +329,40 @@ router.delete("/:id", async (req, res) => {
       return res.status(404).json({ error: "Repair not found" });
     }
 
-    // Delete associated media from Cloudinary
+    // Delete media from Cloudinary (pass correct mediaType so resource_type is right)
     if (repair.multimedia && repair.multimedia.length > 0) {
       console.log(
-        `🧹 Cleaning up ${repair.multimedia.length} files from Cloudinary...`,
+        `🧹 Cleaning up ${repair.multimedia.length} Cloudinary file(s)...`,
       );
       for (const media of repair.multimedia) {
         try {
           if (media.publicId) {
             await deleteMedia(media.publicId, media.type);
           }
-        } catch (cloudinaryError) {
-          console.error("Error deleting from Cloudinary:", cloudinaryError);
-          // Continue with deletion even if Cloudinary fails
+        } catch (cloudinaryErr) {
+          console.error(
+            "Cloudinary deletion error (non-fatal):",
+            cloudinaryErr,
+          );
+          // Continue even if Cloudinary cleanup fails
         }
       }
     }
 
-    // Delete the repair from database
     await Repair.findByIdAndDelete(req.params.id);
-
-    console.log("✅ Repair deleted successfully");
-    res.json({
-      success: true,
-      message: "Repair deleted successfully",
-    });
+    console.log("✅ Repair deleted");
+    return res.json({ success: true, message: "Repair deleted successfully" });
   } catch (error) {
     console.error("❌ Error deleting repair:", error);
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed to delete repair",
       details: error.message,
     });
   }
 });
 
-// Get repairs by status
+// ─── GET /status/:status ──────────────────────────────────────────────────────
+// Get repairs filtered by status
 router.get("/status/:status", async (req, res) => {
   try {
     const { status } = req.params;
@@ -398,10 +370,10 @@ router.get("/status/:status", async (req, res) => {
 
     const repairs = await Repair.find({ status }).sort({ createdAt: -1 });
     console.log(`✅ Found ${repairs.length} repairs`);
-    res.json(repairs);
+    return res.json(repairs);
   } catch (error) {
     console.error("❌ Error fetching repairs by status:", error);
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed to fetch repairs",
       details: error.message,
     });
