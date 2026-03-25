@@ -543,7 +543,7 @@ const ExistingCustomerView = ({ onAddRepair, onBack }) => {
               onChange={(e) =>
                 setRegNumber(e.target.value.replace(/\s+/g, "").toUpperCase())
               }
-              placeholder="e.g., KCA123A"
+              placeholder="e.g., KCA 123A"
               style={inputStyle}
               maxLength={20}
             />
@@ -641,6 +641,7 @@ const RepairForm = ({
   const [dragActive, setDragActive] = useState(false);
   const [showCaptureModal, setShowCaptureModal] = useState(false);
   const [captureType, setCaptureType] = useState(null);
+  const [facingMode, setFacingMode] = useState("environment"); // "environment" = rear, "user" = front
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [error, setError] = useState(null);
@@ -679,13 +680,16 @@ const RepairForm = ({
     }
   };
 
-  const startCapture = async (type) => {
+  const startCapture = async (type, facing = facingMode) => {
     setError(null);
     setCaptureType(type);
     setShowCaptureModal(true);
+    // Stop any existing stream first
+    cleanupMediaStream();
     try {
       const constraints = {
-        video: type === "photo" || type === "video",
+        video:
+          type === "photo" || type === "video" ? { facingMode: facing } : false,
         audio: type === "video",
       };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -707,6 +711,39 @@ const RepairForm = ({
     } catch (err) {
       setError("Unable to access camera. Please check permissions.");
       setShowCaptureModal(false);
+    }
+  };
+
+  // Flip between front and rear camera without closing the modal
+  const flipCamera = async () => {
+    if (isRecording) return; // don't flip mid-recording
+    const newFacing = facingMode === "environment" ? "user" : "environment";
+    setFacingMode(newFacing);
+    // Restart stream with new facing mode
+    cleanupMediaStream();
+    try {
+      const constraints = {
+        video: { facingMode: newFacing },
+        audio: captureType === "video",
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      if (captureType === "video") {
+        try {
+          mediaRecorderRef.current = new MediaRecorder(stream, {
+            mimeType: "video/webm",
+          });
+        } catch {
+          mediaRecorderRef.current = new MediaRecorder(stream);
+        }
+        setupMediaRecorder("video");
+      }
+    } catch (err) {
+      setError("Unable to switch camera.");
     }
   };
 
@@ -758,10 +795,17 @@ const RepairForm = ({
 
   const takePhoto = () => {
     if (!videoRef.current) return;
+    const video = videoRef.current;
     const canvas = document.createElement("canvas");
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    canvas.getContext("2d").drawImage(videoRef.current, 0, 0);
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    // If front camera: flip the canvas back so the saved image isn't mirrored
+    if (facingMode === "user") {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0);
     canvas.toBlob(
       (blob) => {
         if (!blob) return;
@@ -792,6 +836,7 @@ const RepairForm = ({
     setCaptureType(null);
     setIsRecording(false);
     setRecordingTime(0);
+    setFacingMode("environment"); // reset to rear for next time
   };
 
   const handleFileUpload = (e) => {
@@ -1057,7 +1102,7 @@ const RepairForm = ({
                   }
                 : {}),
             }}
-            placeholder="e.g., KCA123A"
+            placeholder="e.g., KCA 123A"
             maxLength={20}
             readOnly={isExistingCustomer}
           />
@@ -1456,18 +1501,67 @@ const RepairForm = ({
               >
                 {captureType === "photo" ? "📷 Take Photo" : "🎬 Record Video"}
               </h3>
-              <button
-                onClick={stopCapture}
-                style={{
-                  background: "none",
-                  border: "none",
-                  fontSize: "22px",
-                  cursor: "pointer",
-                  color: "#666",
-                }}
+              <div
+                style={{ display: "flex", gap: "8px", alignItems: "center" }}
               >
-                <FaTimes />
-              </button>
+                {/* Flip camera button — only show when not recording */}
+                {!isRecording && (
+                  <button
+                    onClick={flipCamera}
+                    title={
+                      facingMode === "environment"
+                        ? "Switch to front camera"
+                        : "Switch to rear camera"
+                    }
+                    style={{
+                      background: "#f0f2f5",
+                      border: "1px solid #e0e0e0",
+                      borderRadius: "50%",
+                      width: "38px",
+                      height: "38px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                      color: "#555",
+                      fontSize: "16px",
+                      transition: "all 0.2s",
+                    }}
+                  >
+                    <FaSyncAlt />
+                  </button>
+                )}
+                <button
+                  onClick={stopCapture}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    fontSize: "22px",
+                    cursor: "pointer",
+                    color: "#666",
+                  }}
+                >
+                  <FaTimes />
+                </button>
+              </div>
+            </div>
+
+            {/* Camera facing indicator */}
+            <div
+              style={{
+                textAlign: "center",
+                marginBottom: "8px",
+                fontFamily: "'Barlow Condensed', sans-serif",
+                fontSize: "0.75rem",
+                fontWeight: 700,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: "#aaa",
+              }}
+            >
+              {facingMode === "environment"
+                ? "🔙 Rear Camera"
+                : "🤳 Front Camera"}
             </div>
 
             {(captureType === "photo" || captureType === "video") && (
@@ -1483,6 +1577,8 @@ const RepairForm = ({
                   marginBottom: "16px",
                   maxHeight: "300px",
                   objectFit: "cover",
+                  // Mirror front camera so it feels natural, don't mirror rear
+                  transform: facingMode === "user" ? "scaleX(-1)" : "none",
                 }}
               />
             )}
