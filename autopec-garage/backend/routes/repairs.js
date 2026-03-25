@@ -91,7 +91,10 @@ router.post("/submit", async (req, res) => {
     }));
 
     const repair = new Repair({
-      registrationNumber: registrationNumber.toUpperCase().trim(),
+      registrationNumber: registrationNumber
+        .replace(/\s+/g, "")
+        .toUpperCase()
+        .trim(),
       problemDescription: problemDescription.trim(),
       customerName: customerName ? customerName.trim() : "",
       phoneNumber: phoneNumber ? phoneNumber.trim() : "",
@@ -197,7 +200,11 @@ router.put("/:id/status", async (req, res) => {
 // ─── GET /track/:registration ─────────────────────────────────────────────────
 router.get("/track/:registration", async (req, res) => {
   try {
-    const registration = req.params.registration.toUpperCase().trim();
+    // Normalize: strip all whitespace and uppercase so "KCA 123T" == "KCA123T"
+    const registration = req.params.registration
+      .replace(/\s+/g, "")
+      .toUpperCase()
+      .trim();
     console.log(`🔍 Tracking: ${registration}`);
 
     const repair = await Repair.findOne({

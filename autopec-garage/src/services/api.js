@@ -236,7 +236,9 @@ export const submitRepairRequest = async (formData, onProgress) => {
 
     // Send only JSON to our backend — small and fast
     const payload = {
-      registrationNumber: formData.registrationNumber,
+      registrationNumber: (formData.registrationNumber || "")
+        .replace(/\s+/g, "")
+        .toUpperCase(),
       problemDescription: formData.problemDescription,
       customerName: formData.customerName || "",
       phoneNumber: formData.phoneNumber || "",
@@ -291,8 +293,10 @@ export const updateRepairStatus = async (id, data) => {
 // ─── trackRepair ──────────────────────────────────────────────────────────────
 export const trackRepair = async (registrationNumber) => {
   try {
+    // Normalize: strip all spaces and uppercase before querying
+    const normalized = registrationNumber.replace(/\s+/g, "").toUpperCase();
     const response = await api.get(
-      `/api/repairs/track/${encodeURIComponent(registrationNumber)}`,
+      `/api/repairs/track/${encodeURIComponent(normalized)}`,
     );
     return response.data;
   } catch (error) {

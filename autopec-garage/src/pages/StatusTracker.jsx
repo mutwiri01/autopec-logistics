@@ -1,3 +1,5 @@
+/* eslint-disable react-hooks/exhaustive-deps */
+/* eslint-disable no-unused-vars */
 import React, { useState, useEffect } from "react";
 import {
   FaCarSide,
@@ -54,7 +56,6 @@ const StatusTracker = () => {
   const [repairData, setRepairData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  // eslint-disable-next-line no-unused-vars
   const [searched, setSearched] = useState(false);
 
   // Auto-search if ?track= param is present in URL
@@ -64,11 +65,11 @@ const StatusTracker = () => {
       setRegNumber(track.toUpperCase());
       handleSearch(track);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSearch = async (regOverride) => {
-    const reg = (regOverride || regNumber).trim().toUpperCase();
+    const raw = (regOverride || regNumber).trim().toUpperCase();
+    const reg = raw.replace(/\s+/g, ""); // strip spaces: "KCA 123T" → "KCA123T"
     if (!reg) {
       setError("Please enter a registration number.");
       return;
@@ -159,7 +160,9 @@ const StatusTracker = () => {
               <input
                 type="text"
                 value={regNumber}
-                onChange={(e) => setRegNumber(e.target.value.toUpperCase())}
+                onChange={(e) =>
+                  setRegNumber(e.target.value.replace(/\s+/g, "").toUpperCase())
+                }
                 onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                 placeholder="e.g. KCA 123A"
                 style={{

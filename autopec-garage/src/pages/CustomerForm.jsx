@@ -164,7 +164,9 @@ const ExistingCustomerView = ({ onAddRepair, onBack }) => {
     setLookupError("");
     setCustomerData(null);
     try {
-      const repair = await trackRepair(regNumber.trim());
+      // Normalize: strip spaces so "KCA 123T" matches stored "KCA123T"
+      const normalized = regNumber.trim().replace(/\s+/g, "").toUpperCase();
+      const repair = await trackRepair(normalized);
       // Verify phone matches
       if (
         !repair.phoneNumber ||
@@ -538,7 +540,9 @@ const ExistingCustomerView = ({ onAddRepair, onBack }) => {
             <input
               type="text"
               value={regNumber}
-              onChange={(e) => setRegNumber(e.target.value.toUpperCase())}
+              onChange={(e) =>
+                setRegNumber(e.target.value.replace(/\s+/g, "").toUpperCase())
+              }
               placeholder="e.g., KCA 123A"
               style={inputStyle}
               maxLength={20}
@@ -1037,7 +1041,9 @@ const RepairForm = ({
             onChange={(e) =>
               setFormData({
                 ...formData,
-                registrationNumber: e.target.value.toUpperCase(),
+                registrationNumber: e.target.value
+                  .replace(/\s+/g, "")
+                  .toUpperCase(),
               })
             }
             required
