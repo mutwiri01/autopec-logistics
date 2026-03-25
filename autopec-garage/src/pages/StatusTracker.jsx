@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-vars */
 import React, { useState, useEffect } from "react";
 import {
   FaCarSide,
@@ -14,15 +13,31 @@ import {
   FaClock,
   FaClipboardList,
 } from "react-icons/fa";
+import { useSearchParams } from "react-router-dom";
 import { trackRepair } from "../services/api";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import StatusBadge, { STATUS_CONFIG } from "../components/StatusBadge";
 
 const STATUS_FLOW = ["submitted", "in_garage", "in_progress", "completed"];
-const stepLabels = { submitted: "Submitted", in_garage: "In Garage", in_progress: "In Progress", completed: "Completed" };
-const stepIcons = { submitted: <FaCarSide />, in_garage: <FaTools />, in_progress: <FaWrench />, completed: <FaCheckCircle /> };
-const stepColors = { submitted: "#f39c12", in_garage: "#0984e3", in_progress: "#00b894", completed: "#27ae60" };
+const stepLabels = {
+  submitted: "Submitted",
+  in_garage: "In Garage",
+  in_progress: "In Progress",
+  completed: "Completed",
+};
+const stepIcons = {
+  submitted: <FaCarSide />,
+  in_garage: <FaTools />,
+  in_progress: <FaWrench />,
+  completed: <FaCheckCircle />,
+};
+const stepColors = {
+  submitted: "#f39c12",
+  in_garage: "#0984e3",
+  in_progress: "#00b894",
+  completed: "#27ae60",
+};
 
 const fmt = (d) =>
   new Date(d).toLocaleString("en-KE", {
@@ -34,18 +49,19 @@ const fmt = (d) =>
   });
 
 const StatusTracker = () => {
+  const [searchParams] = useSearchParams();
   const [regNumber, setRegNumber] = useState("");
   const [repairData, setRepairData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // eslint-disable-next-line no-unused-vars
   const [searched, setSearched] = useState(false);
 
-  // Auto-search if ?track= param in URL
+  // Auto-search if ?track= param is present in URL
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const track = params.get("track");
+    const track = searchParams.get("track");
     if (track) {
-      setRegNumber(track);
+      setRegNumber(track.toUpperCase());
       handleSearch(track);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -53,7 +69,10 @@ const StatusTracker = () => {
 
   const handleSearch = async (regOverride) => {
     const reg = (regOverride || regNumber).trim().toUpperCase();
-    if (!reg) { setError("Please enter a registration number."); return; }
+    if (!reg) {
+      setError("Please enter a registration number.");
+      return;
+    }
     setLoading(true);
     setError("");
     setRepairData(null);
@@ -163,7 +182,9 @@ const StatusTracker = () => {
               disabled={loading}
               style={{
                 padding: "13px 20px",
-                background: loading ? "#ccc" : "linear-gradient(135deg,#c0392b,#96281b)",
+                background: loading
+                  ? "#ccc"
+                  : "linear-gradient(135deg,#c0392b,#96281b)",
                 color: "white",
                 border: "none",
                 borderRadius: "50px",
@@ -180,7 +201,11 @@ const StatusTracker = () => {
                 boxShadow: loading ? "none" : "0 4px 16px rgba(192,57,43,0.3)",
               }}
             >
-              {loading ? <FaSyncAlt style={{ animation: "spin 0.8s linear infinite" }} /> : <FaSearch />}
+              {loading ? (
+                <FaSyncAlt style={{ animation: "spin 0.8s linear infinite" }} />
+              ) : (
+                <FaSearch />
+              )}
               Track
             </button>
           </div>
@@ -236,7 +261,15 @@ const StatusTracker = () => {
                   background: "linear-gradient(90deg,#c0392b,#f39c12)",
                 }}
               />
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  flexWrap: "wrap",
+                  gap: "12px",
+                }}
+              >
                 <div>
                   <div
                     style={{
@@ -249,8 +282,15 @@ const StatusTracker = () => {
                   >
                     {repairData.registrationNumber}
                   </div>
-                  <div style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.9rem", marginTop: "4px" }}>
-                    {repairData.carModel || "Vehicle"} · {repairData.customerName || "Customer"}
+                  <div
+                    style={{
+                      color: "rgba(255,255,255,0.6)",
+                      fontSize: "0.9rem",
+                      marginTop: "4px",
+                    }}
+                  >
+                    {repairData.carModel || "Vehicle"} ·{" "}
+                    {repairData.customerName || "Customer"}
                   </div>
                 </div>
                 <StatusBadge status={repairData.status} size="lg" />
@@ -291,25 +331,42 @@ const StatusTracker = () => {
                           style={{
                             flex: 1,
                             height: "3px",
-                            background: idx <= currentStep ? stepColors[STATUS_FLOW[currentStep]] : "#e0e0e0",
+                            background:
+                              idx <= currentStep
+                                ? stepColors[STATUS_FLOW[currentStep]]
+                                : "#e0e0e0",
                           }}
                         />
                       )}
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          gap: "6px",
+                          flexShrink: 0,
+                        }}
+                      >
                         <div
                           style={{
                             width: "38px",
                             height: "38px",
                             borderRadius: "50%",
-                            background: done ? stepColors[STATUS_FLOW[currentStep]] : "#f0f0f0",
+                            background: done
+                              ? stepColors[STATUS_FLOW[currentStep]]
+                              : "#f0f0f0",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
                             color: done ? "white" : "#ccc",
                             fontSize: "14px",
-                            border: active ? `3px solid ${stepColors[step]}` : "3px solid transparent",
+                            border: active
+                              ? `3px solid ${stepColors[step]}`
+                              : "3px solid transparent",
                             boxSizing: "border-box",
-                            boxShadow: active ? `0 0 0 4px ${stepColors[step]}22` : "none",
+                            boxShadow: active
+                              ? `0 0 0 4px ${stepColors[step]}22`
+                              : "none",
                             transition: "all 0.3s",
                           }}
                         >
@@ -320,7 +377,11 @@ const StatusTracker = () => {
                             fontSize: "0.62rem",
                             fontFamily: "'Barlow Condensed', sans-serif",
                             fontWeight: active ? 700 : 500,
-                            color: active ? stepColors[step] : done ? "#555" : "#ccc",
+                            color: active
+                              ? stepColors[step]
+                              : done
+                                ? "#555"
+                                : "#ccc",
                             textTransform: "uppercase",
                             whiteSpace: "nowrap",
                             letterSpacing: "0.04em",
@@ -415,8 +476,13 @@ const StatusTracker = () => {
                   fontSize: "0.82rem",
                 }}
               >
-                <span><FaClock style={{ marginRight: "4px" }} />Submitted: {fmt(repairData.createdAt)}</span>
-                <span>Updated: {fmt(repairData.updatedAt || repairData.createdAt)}</span>
+                <span>
+                  <FaClock style={{ marginRight: "4px" }} />
+                  Submitted: {fmt(repairData.createdAt)}
+                </span>
+                <span>
+                  Updated: {fmt(repairData.updatedAt || repairData.createdAt)}
+                </span>
               </div>
             </div>
           </div>
