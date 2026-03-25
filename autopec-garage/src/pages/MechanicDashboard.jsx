@@ -1604,17 +1604,16 @@ const MechanicDashboard = () => {
               scrollbarWidth: "none",
             }}
           >
-            {tabs.map(({ key, label, count, color }) => (
+            {tabs.map(({ key: tabKey, label, count, color }) => (
               <button
-                key={key}
-                onClick={() => setActiveTab(key)}
+                key={tabKey}
+                onClick={() => setActiveTab(tabKey)}
                 style={{
                   flexShrink: 0,
                   padding: "8px 16px",
                   borderRadius: "20px",
-                  border: "none",
-                  background: activeTab === key ? color : "white",
-                  color: activeTab === key ? "white" : "#666",
+                  background: activeTab === tabKey ? color : "white",
+                  color: activeTab === tabKey ? "white" : "#666",
                   cursor: "pointer",
                   fontFamily: "'Barlow Condensed', sans-serif",
                   fontWeight: 700,
@@ -1623,11 +1622,10 @@ const MechanicDashboard = () => {
                   textTransform: "uppercase",
                   transition: "all 0.2s",
                   boxShadow:
-                    activeTab === key
+                    activeTab === tabKey
                       ? `0 4px 12px ${color}33`
                       : "0 1px 4px rgba(0,0,0,0.06)",
-                  // eslint-disable-next-line no-dupe-keys
-                  border: activeTab === key ? "none" : "1px solid #e0e0e0",
+                  border: activeTab === tabKey ? "none" : "1px solid #e0e0e0",
                   display: "flex",
                   alignItems: "center",
                   gap: "6px",
@@ -1637,8 +1635,10 @@ const MechanicDashboard = () => {
                 <span
                   style={{
                     background:
-                      activeTab === key ? "rgba(255,255,255,0.25)" : "#f0f0f0",
-                    color: activeTab === key ? "white" : "#888",
+                      activeTab === tabKey
+                        ? "rgba(255,255,255,0.25)"
+                        : "#f0f0f0",
+                    color: activeTab === tabKey ? "white" : "#888",
                     borderRadius: "10px",
                     padding: "0 6px",
                     fontSize: "0.75rem",
