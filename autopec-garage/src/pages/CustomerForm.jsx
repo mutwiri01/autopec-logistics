@@ -543,7 +543,7 @@ const ExistingCustomerView = ({ onAddRepair, onBack }) => {
               onChange={(e) =>
                 setRegNumber(e.target.value.replace(/\s+/g, "").toUpperCase())
               }
-              placeholder="e.g., KCA 123A"
+              placeholder="e.g., KCA123A"
               style={inputStyle}
               maxLength={20}
             />
@@ -1057,7 +1057,7 @@ const RepairForm = ({
                   }
                 : {}),
             }}
-            placeholder="e.g., KCA 123A"
+            placeholder="e.g., KCA123A"
             maxLength={20}
             readOnly={isExistingCustomer}
           />
