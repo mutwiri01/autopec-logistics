@@ -1,4 +1,3 @@
-/* eslint-disable no-dupe-keys */
 /* eslint-disable no-unused-vars */
 import React, { useState, useEffect, useMemo } from "react";
 import {
@@ -35,6 +34,7 @@ import {
   FaAngleRight,
   FaEye,
   FaArrowLeft,
+  FaListAlt,
 } from "react-icons/fa";
 import {
   getAllRepairs,
@@ -565,7 +565,7 @@ const CustomerProfile = ({ repairs, onClose }) => {
           {/* Repair History */}
           <div style={{ marginBottom: "20px" }}>
             <div style={{ ...labelStyle, marginBottom: "12px" }}>
-              <FaHistory /> Repair History ({repairs.length})
+              <FaListAlt /> Repair History ({repairs.length})
             </div>
             <div style={{ display: "grid", gap: "10px" }}>
               {repairs.map((r, idx) => (
@@ -1626,6 +1626,7 @@ const MechanicDashboard = () => {
                     activeTab === key
                       ? `0 4px 12px ${color}33`
                       : "0 1px 4px rgba(0,0,0,0.06)",
+                  // eslint-disable-next-line no-dupe-keys
                   border: activeTab === key ? "none" : "1px solid #e0e0e0",
                   display: "flex",
                   alignItems: "center",
