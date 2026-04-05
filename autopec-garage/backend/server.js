@@ -1,5 +1,4 @@
 const express = require("express");
-const mongoose = require("mongoose");
 const cors = require("cors");
 const repairRoutes = require("./routes/repairs");
 const cloudinaryPkg = require("cloudinary").v2;
@@ -65,68 +64,32 @@ app.use(
 );
 
 // ─── Body parsing ─────────────────────────────────────────────────────────────
-// Files go directly browser→Cloudinary now, so only small JSON arrives here.
+// Files go directly browser→Cloudinary; only small JSON arrives here.
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
-// ─── MongoDB: lazy connection ─────────────────────────────────────────────────
-// On Vercel serverless, connecting at module load time causes cold-start
-// failures if MongoDB is slow to respond. Instead we connect on the first
-// request and reuse the cached connection for all subsequent requests
-// (Mongoose caches the connection internally).
-//
-// IMPORTANT: process.exit() is intentionally absent — calling it inside a
-// serverless function crashes the invocation permanently and prevents Vercel
-// from returning any error response to the client.
-let dbConnected = false;
+// ─── Supabase client ──────────────────────────────────────────────────────────
+// We use the service-role key on the server so RLS is bypassed.
+// The client is lazy-initialised: it requires no persistent connection or
+// connection pool — every Supabase call is an HTTPS request, making it
+// perfectly suited to Vercel's serverless / cold-start environment.
+const { createClient } = require("@supabase/supabase-js");
 
-const connectDB = async () => {
-  if (dbConnected || mongoose.connection.readyState === 1) return;
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  try {
-    await mongoose.connect(process.env.MONGODB_URI, {
-      // useNewUrlParser and useUnifiedTopology are removed — they are
-      // deprecated no-ops in Mongoose 7+ and cause warnings in Mongoose 6+.
-      serverSelectionTimeoutMS: 8000, // Fail fast so Vercel doesn't timeout
-      socketTimeoutMS: 30000,
-      maxPoolSize: 5, // Small pool suits serverless well
-    });
-    dbConnected = true;
-    console.log("✅ MongoDB connected");
-  } catch (err) {
-    // Log but do NOT call process.exit() — let the request handler return a
-    // proper 503 to the client instead of crashing the function.
-    console.error("❌ MongoDB connection failed:", err.message);
-    throw err;
-  }
-};
+if (!supabaseUrl || !supabaseServiceKey) {
+  console.error(
+    "❌ Supabase config missing — set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY",
+  );
+}
 
-// Middleware that ensures DB is connected before any route runs
-app.use(async (req, res, next) => {
-  try {
-    await connectDB();
-    next();
-  } catch (err) {
-    console.error("DB middleware error:", err.message);
-    return res.status(503).json({
-      error: "Database unavailable",
-      details: "Could not connect to the database. Please try again shortly.",
-    });
-  }
+// Export a single shared client so all route files can import it
+const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: { persistSession: false }, // server-side: no session persistence needed
 });
 
-mongoose.connection.on("error", (err) => {
-  console.error("MongoDB error:", err);
-  dbConnected = false;
-});
-mongoose.connection.on("disconnected", () => {
-  console.log("MongoDB disconnected");
-  dbConnected = false;
-});
-mongoose.connection.on("reconnected", () => {
-  console.log("MongoDB reconnected");
-  dbConnected = true;
-});
+module.exports.supabase = supabase;
 
 // ─── Cloudinary configuration ─────────────────────────────────────────────────
 cloudinaryPkg.config({
@@ -188,7 +151,7 @@ app.get("/health", (_req, res) =>
   res.status(200).json({
     status: "OK",
     message: "Server is running",
-    db: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    db: "supabase", // Supabase is always "connected" via HTTPS
     timestamp: new Date().toISOString(),
   }),
 );
@@ -196,7 +159,8 @@ app.get("/health", (_req, res) =>
 app.get("/api", (_req, res) =>
   res.status(200).json({
     message: "Autopec API",
-    version: "2.0.0",
+    version: "3.0.0",
+    database: "Supabase (PostgreSQL)",
     endpoints: {
       "GET  /api/repairs": "Get all repairs",
       "POST /api/repairs/submit": "Submit repair (JSON only)",
@@ -213,11 +177,6 @@ app.get("/api", (_req, res) =>
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
 
-  if (err.name === "ValidationError") {
-    return res
-      .status(400)
-      .json({ error: "Validation error", details: err.message });
-  }
   if (err.message === "Not allowed by CORS") {
     return res
       .status(403)
@@ -231,8 +190,6 @@ app.use((err, req, res, next) => {
 });
 
 // ─── Local dev only ───────────────────────────────────────────────────────────
-// On Vercel the module is imported as a serverless handler — app.listen()
-// must not be called there.
 if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
