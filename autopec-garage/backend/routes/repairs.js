@@ -1,11 +1,15 @@
 const express = require("express");
 const router = express.Router();
-const { supabase } = require("../server");
+// ✅ Import from the dedicated client module — NOT from server.js.
+//    Importing from server.js caused a circular dependency where server.js
+//    required repairs.js before the supabase export was initialised,
+//    resulting in "Cannot read properties of undefined (reading 'from')".
+const supabase = require("../config/Supabaseclient");
 const { deleteMedia } = require("../config/cloudinary");
 
 // ─── Helper: convert Supabase snake_case row → camelCase shape ───────────────
 // The frontend and the existing API contract expect _id, registrationNumber,
-// problemDescription, etc.  Supabase stores everything in snake_case, so we
+// problemDescription, etc. Supabase stores everything in snake_case, so we
 // normalise before sending responses.
 const toClient = (row) => {
   if (!row) return null;
@@ -229,7 +233,7 @@ router.put("/:id/status", async (req, res) => {
       .single();
 
     if (error) {
-      // Supabase returns an error with code PGRST116 when no rows match
+      // Supabase returns code PGRST116 when no rows match the filter
       if (error.code === "PGRST116") {
         return res.status(404).json({ error: "Repair not found" });
       }
@@ -305,7 +309,7 @@ router.delete("/:id", async (req, res) => {
     const { id } = req.params;
     console.log(`🗑️ Deleting repair: ${id}`);
 
-    // Fetch first so we can delete its Cloudinary media
+    // Fetch first so we can clean up Cloudinary media
     const { data: repair, error: fetchError } = await supabase
       .from("repairs")
       .select("*")

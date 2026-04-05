@@ -68,29 +68,6 @@ app.use(
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
-// ─── Supabase client ──────────────────────────────────────────────────────────
-// We use the service-role key on the server so RLS is bypassed.
-// The client is lazy-initialised: it requires no persistent connection or
-// connection pool — every Supabase call is an HTTPS request, making it
-// perfectly suited to Vercel's serverless / cold-start environment.
-const { createClient } = require("@supabase/supabase-js");
-
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!supabaseUrl || !supabaseServiceKey) {
-  console.error(
-    "❌ Supabase config missing — set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY",
-  );
-}
-
-// Export a single shared client so all route files can import it
-const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-  auth: { persistSession: false }, // server-side: no session persistence needed
-});
-
-module.exports.supabase = supabase;
-
 // ─── Cloudinary configuration ─────────────────────────────────────────────────
 cloudinaryPkg.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -151,7 +128,7 @@ app.get("/health", (_req, res) =>
   res.status(200).json({
     status: "OK",
     message: "Server is running",
-    db: "supabase", // Supabase is always "connected" via HTTPS
+    db: "supabase",
     timestamp: new Date().toISOString(),
   }),
 );
